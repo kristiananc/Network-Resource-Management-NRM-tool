@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nrm-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-24"
+
+  // Do not place secrets in this file.
+  // Twilio tokens and internal authentication keys belong in Cloudflare
+  // Worker secrets or another deployment secret store.
+}
