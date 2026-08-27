@@ -4,9 +4,12 @@ NRM is a local-AI, human-in-the-loop personal relationship-management system for
 
 ## Development status
 
-This repository is currently at **Stage 0 — Repository, Configuration, and Design Freeze**.
+**Stage 0 — Repository, Configuration, and Design Freeze is complete.** The
+historical Apps Script prototype was restored as a read-only archive in commit
+`b6d1bbe` (`Update original_apps_script.gs`), closing the final Stage 0
+documentation/archive item.
 
-No application logic should be treated as active yet. Stage 0 establishes the repository structure, schema version 1.0, enums, configuration boundaries, and the authorized-sender → `owner_id` format that later stages will implement.
+No application logic should be treated as active yet. Stage 0 establishes the repository structure, schema version 1.0, enums, configuration boundaries, and the authorized-sender → `owner_id` format that later stages will implement. The file `legacy/original_apps_script.gs` is archive-only history and is not an active implementation path.
 
 ## Core architecture
 
@@ -125,7 +128,7 @@ nrm/
 │   │   └── security.py
 │   └── tests/
 └── legacy/
-    └── original_apps_script.gs
+    └── original_apps_script.gs  # read-only historical archive; not active code
 ```
 
 ## Configuration boundaries
