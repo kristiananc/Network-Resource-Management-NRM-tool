@@ -1,7 +1,16 @@
 /**
- * NRM Stage 0 scaffold: Code.gs
- *
- * No application logic is implemented in Stage 0.
- * Secrets must use Apps Script Script Properties, never spreadsheet cells
- * or committed source code.
+ * Active Stage 3 entry point. The caller supplies an authenticated,
+ * normalized event; this layer does not parse Twilio form payloads.
  */
+
+function handleNormalizedEvent(event) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    throw new Error('STATE_MACHINE_BUSY: could not acquire script lock.');
+  }
+  try {
+    return routeNormalizedEvent(event);
+  } finally {
+    lock.releaseLock();
+  }
+}

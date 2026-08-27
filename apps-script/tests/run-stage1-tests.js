@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { execFileSync } = require('child_process');
 
 class MockRange {
   constructor(sheet, row, column, rowCount, columnCount) {
@@ -133,6 +134,39 @@ global.Logger = {
   log: (message) => console.log(message)
 };
 
+global.LockService = {
+  getScriptLock: () => ({
+    tryLock: () => true,
+    releaseLock: () => undefined
+  })
+};
+
+global.PropertiesService = {
+  getScriptProperties: () => ({
+    getProperty: (name) => process.env[name] || null
+  })
+};
+
+global.UrlFetchApp = {
+  fetch: (url, options) => {
+    const args = ['-sS', '-X', String(options.method || 'get').toUpperCase()];
+    if (options.contentType) args.push('-H', `Content-Type: ${options.contentType}`);
+    Object.entries(options.headers || {}).forEach(([name, value]) => {
+      args.push('-H', `${name}: ${value}`);
+    });
+    if (options.payload !== undefined) args.push('--data', options.payload);
+    args.push('-w', '\n%{http_code}', url);
+    const output = execFileSync('curl', args, { encoding: 'utf8' });
+    const lines = output.split('\n');
+    const statusCode = Number(lines.pop());
+    const responseText = lines.join('\n');
+    return {
+      getResponseCode: () => statusCode,
+      getContentText: () => responseText
+    };
+  }
+};
+
 function loadAppsScript(fileName) {
   const filePath = path.join(__dirname, '..', fileName);
   vm.runInThisContext(fs.readFileSync(filePath, 'utf8'), { filename: filePath });
@@ -142,7 +176,11 @@ loadAppsScript('Utils.gs');
 loadAppsScript('Sheets.gs');
 loadAppsScript('Tests.gs');
 
-console.log('RUN runStage1Tests');
-runStage1Tests();
-console.log('RUN runCrossOwnerIsolationTest');
-runCrossOwnerIsolationTest();
+if (require.main === module) {
+  console.log('RUN runStage1Tests');
+  runStage1Tests();
+  console.log('RUN runCrossOwnerIsolationTest');
+  runCrossOwnerIsolationTest();
+}
+
+module.exports = { loadAppsScript };

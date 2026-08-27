@@ -40,3 +40,43 @@ test adapter:
 ```shell
 node apps-script/tests/run-stage1-tests.js
 ```
+
+## Stage 3 normalized event routing
+
+Stage 3 exposes `handleNormalizedEvent(event)`. It accepts an authenticated,
+normalized event object containing `message_sid`, `owner_id`, `owner_number`,
+`body`, and optional `review_id`, `media_refs`, `contact_query`, and `contact`
+fields. It does not parse Twilio webhook form data or legacy command strings.
+
+Set `NRM_LOCAL_API_BASE_URL` and `NRM_INTERNAL_API_TOKEN` in Apps Script Script
+Properties before using the real Stage 2 client. The token must not be placed
+in a sheet or committed file.
+
+Run the Stage 3 Apps Script suite with:
+
+```javascript
+runStage3Tests();
+```
+
+Run only the concurrent two-owner loop with:
+
+```javascript
+runStage3CrossOwnerLoopTest();
+```
+
+The local regression runner uses a deterministic Stage 2-compatible dummy
+client and does not require Twilio, a Worker, a Tunnel, or a live LLM:
+
+```shell
+node apps-script/tests/run-stage3-tests.js
+```
+
+With the Stage 2 Uvicorn server already running locally, the Node adapter can
+also exercise the production Apps Script client contract over real HTTP:
+
+```shell
+NRM_STAGE3_LIVE_FASTAPI=1 \
+NRM_LOCAL_API_BASE_URL=http://127.0.0.1:8765 \
+NRM_INTERNAL_API_TOKEN=replace-with-the-running-server-token \
+  node apps-script/tests/run-stage3-tests.js
+```

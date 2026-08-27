@@ -29,6 +29,7 @@ const NRM_HEADERS = Object.freeze({
 const NRM_WORKFLOW_STATES = Object.freeze([
   'PROCESSING', 'DISAMBIGUATING', 'PENDING_REVIEW', 'REVISING', 'ERROR'
 ]);
+const NRM_CONTACT_STATUSES = Object.freeze(['ACTIVE', 'ARCHIVED', 'MERGED']);
 const NRM_PLATFORMS = Object.freeze([
   'IN_PERSON', 'TEXT', 'CALL', 'EMAIL', 'LINKEDIN', 'INSTAGRAM', 'EVENT',
   'VIDEO_CALL', 'OTHER'
@@ -96,6 +97,30 @@ function searchContacts(query, owner_id) {
   });
 }
 
+function createContact(contactData, owner_id) {
+  const ownerId = _nrmRequireOwnerId_(owner_id);
+  const data = _nrmOwnedCopy_(contactData, ownerId, 'Contact');
+  _nrmRequireFields_(data, ['display_name'], 'Contact');
+
+  const now = currentDateTimeUtc();
+  data.contact_id = data.contact_id || generateUuid();
+  if (findContactById(data.contact_id, ownerId)) {
+    throw new Error('DUPLICATE_CONTACT_ID: contact_id already exists for owner_id.');
+  }
+  data.created_at = data.created_at ? normalizeDateTime(data.created_at) : now;
+  data.updated_at = data.updated_at ? normalizeDateTime(data.updated_at) : now;
+  data.status = data.status || 'ACTIVE';
+  _nrmRequireEnum_(data.status, NRM_CONTACT_STATUSES, 'status');
+  if (data.last_contact) {
+    data.last_contact = normalizeDate(data.last_contact);
+  }
+  if (data.last_platform) {
+    _nrmRequireEnum_(data.last_platform, NRM_PLATFORMS, 'last_platform');
+  }
+
+  return _nrmAppendObject_('Contacts', data);
+}
+
 function appendInteraction(interactionData, owner_id) {
   const ownerId = _nrmRequireOwnerId_(owner_id);
   const data = _nrmOwnedCopy_(interactionData, ownerId, 'Interaction');
@@ -138,6 +163,24 @@ function createStaging(stagingData, owner_id) {
   _nrmValidateStagingContactIds_(data, ownerId);
 
   return _nrmAppendObject_('Staging', data);
+}
+
+function findStagingByReviewId(review_id, owner_id) {
+  const ownerId = _nrmRequireOwnerId_(owner_id);
+  const reviewId = _nrmRequireString_(review_id, 'review_id');
+  const match = _nrmReadOwnedRows_('Staging', ownerId).find(function (entry) {
+    return entry.record.review_id === reviewId;
+  });
+  return match ? match.record : null;
+}
+
+function findInteractionBySourceMessageSid(message_sid, owner_id) {
+  const ownerId = _nrmRequireOwnerId_(owner_id);
+  const messageSid = _nrmRequireString_(message_sid, 'message_sid');
+  const match = _nrmReadOwnedRows_('Interactions', ownerId).find(function (entry) {
+    return entry.record.source_message_sid === messageSid;
+  });
+  return match ? match.record : null;
 }
 
 function updateStaging(review_id, updates, owner_id) {
@@ -306,7 +349,11 @@ function _nrmParseContactIdList_(value) {
 }
 
 function _nrmRequireOwnerId_(ownerId) {
-  return _nrmRequireString_(ownerId, 'owner_id');
+  const passthrough = String(ownerId === undefined || ownerId === null ? '' : ownerId);
+  if (!passthrough.trim()) {
+    throw new Error('MISSING_REQUIRED_FIELD: owner_id');
+  }
+  return passthrough;
 }
 
 function _nrmRequireString_(value, fieldName) {
