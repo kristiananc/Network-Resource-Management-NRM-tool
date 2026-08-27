@@ -1,0 +1,45 @@
+---
+description: Require evidence-backed Stage Completion Reports and Manager approval between stages
+alwaysApply: true
+---
+
+# Stage Completion Reporting and Manager Review
+
+- The user relays reports to a separate Manager (Claude); there is no direct contact with the Manager.
+- End every task—including blocked or partially achievable tasks—with the exact report structure below.
+- Do not replace the report with a prose summary.
+- Do not claim a requirement passes without actual evidence.
+- For code, include the actual diff or full function body.
+- For tests, include the exact command and verbatim output or log.
+- If execution is unavailable, state that explicitly and give exact manual steps plus the expected evidence the user must return.
+- If evidence is incomplete, report the exit gate as not confirmed.
+- Do not begin a subsequent stage without an explicit `proceed` verdict relayed from the Manager.
+
+```text
+STAGE COMPLETION REPORT
+
+Stage / Task: [name]
+
+Exit gate being targeted:
+[copy the exit gate text from the task prompt verbatim]
+
+Files changed or added:
+[full list of file paths, with one line each on what changed]
+
+Work completed:
+[checklist, one line per sub-requirement from the task prompt, each marked done / partial / not done]
+
+Evidence:
+[actual code diff/full function bodies, exact commands and verbatim output, or exact manual verification steps]
+
+Deviations from the task as given:
+[anything done differently, including assumptions made because of ambiguity]
+
+Known gaps / not yet done:
+[explicit gaps, including minor ones]
+
+Self-assessment:
+[honest gate assessment; incomplete evidence means NOT yet confirmed]
+
+## Requesting Manager review before proceeding to next stage.
+```
