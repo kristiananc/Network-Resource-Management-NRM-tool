@@ -6,6 +6,7 @@
 const NRM_LOCAL_API_URL_PROPERTY = 'NRM_LOCAL_API_BASE_URL';
 const NRM_LOCAL_API_TOKEN_PROPERTY = 'NRM_INTERNAL_API_TOKEN';
 const NRM_AUTHORIZED_SENDERS_PROPERTY = 'NRM_AUTHORIZED_SENDERS_JSON';
+const NRM_SPREADSHEET_ID_PROPERTY = 'NRM_SPREADSHEET_ID';
 
 // Tests may supply a synthetic map. Production leaves this null and reads the
 // same { E.164 sender: opaque owner_id } shape from Script Properties.

@@ -5,7 +5,34 @@ does not implement Twilio, AI, FastAPI, or Worker behavior.
 
 ## Provision the four tabs
 
-Add the files in this directory to a Google Apps Script project, then run:
+Production and deployed web-app executions use the required Script Property
+`NRM_SPREADSHEET_ID` and open that spreadsheet explicitly. They never depend on
+`SpreadsheetApp.getActiveSpreadsheet()`.
+
+After adding the files in this directory to the Google Apps Script project,
+run this one-time function from the Apps Script editor:
+
+```javascript
+setupNrmProductionSpreadsheet();
+```
+
+If the project is bound to a Google Sheet, the function adopts that parent. If
+the project is standalone, it creates a spreadsheet named `NRM Production`.
+If `NRM_SPREADSHEET_ID` is already configured, it opens that existing file.
+In every case it provisions the four schema tabs and logs output in this form:
+
+```text
+NRM production spreadsheet source: bound spreadsheet
+NAME: Network Resource Management
+ID: 1exampleSpreadsheetId
+URL: https://docs.google.com/spreadsheets/d/1exampleSpreadsheetId/edit
+SCRIPT PROPERTY: NRM_SPREADSHEET_ID=1exampleSpreadsheetId
+```
+
+The helper automatically sets `NRM_SPREADSHEET_ID` when adopting or creating a
+file. Copy the logged URL to open the production database directly. To point at
+a pre-existing different file instead, set `NRM_SPREADSHEET_ID` manually under
+Project Settings → Script Properties, then run:
 
 ```javascript
 setupNrmSheets();
@@ -15,6 +42,9 @@ The function creates missing `Contacts`, `Interactions`, `Staging`, and
 `EventLog` tabs with the exact schema v1.0 headers from `docs/schemas.md`. It
 initializes an existing empty tab, but refuses to overwrite a non-empty tab
 whose headers do not match the frozen schema.
+
+The test suites explicitly override the spreadsheet selector with temporary
+files; they do not read or write the production ID.
 
 ## Run the Apps Script tests
 

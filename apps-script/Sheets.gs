@@ -39,6 +39,48 @@ const NRM_EVENT_STATUSES = Object.freeze(['SUCCESS', 'RETRY', 'FAILURE']);
 // Tests may temporarily supply an isolated spreadsheet. Production leaves this null.
 var NRM_TEST_SPREADSHEET_ = null;
 
+/**
+ * One-time production provisioning helper. It adopts the bound spreadsheet
+ * when run from a bound editor, or creates "NRM Production" for a standalone
+ * project. The resulting ID is persisted explicitly for web-app executions.
+ */
+function setupNrmProductionSpreadsheet() {
+  const properties = PropertiesService.getScriptProperties();
+  const configuredId = String(properties.getProperty(NRM_SPREADSHEET_ID_PROPERTY) || '').trim();
+  let spreadsheet;
+  let source;
+
+  if (configuredId) {
+    spreadsheet = SpreadsheetApp.openById(configuredId);
+    source = 'existing Script Property';
+  } else {
+    const boundSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    if (boundSpreadsheet) {
+      spreadsheet = boundSpreadsheet;
+      source = 'bound spreadsheet';
+    } else {
+      spreadsheet = SpreadsheetApp.create('NRM Production');
+      source = 'newly created spreadsheet';
+    }
+    properties.setProperty(NRM_SPREADSHEET_ID_PROPERTY, spreadsheet.getId());
+  }
+
+  setupNrmSheets();
+  const output = {
+    source: source,
+    name: spreadsheet.getName(),
+    id: spreadsheet.getId(),
+    url: spreadsheet.getUrl(),
+    script_property: NRM_SPREADSHEET_ID_PROPERTY
+  };
+  Logger.log('NRM production spreadsheet source: ' + output.source);
+  Logger.log('NAME: ' + output.name);
+  Logger.log('ID: ' + output.id);
+  Logger.log('URL: ' + output.url);
+  Logger.log('SCRIPT PROPERTY: ' + output.script_property + '=' + output.id);
+  return output;
+}
+
 function setupNrmSheets() {
   const spreadsheet = _nrmGetSpreadsheet_();
   Object.keys(NRM_HEADERS).forEach(function (sheetName) {
@@ -239,7 +281,16 @@ function logEvent(eventData, owner_id) {
 }
 
 function _nrmGetSpreadsheet_() {
-  return NRM_TEST_SPREADSHEET_ || SpreadsheetApp.getActiveSpreadsheet();
+  if (NRM_TEST_SPREADSHEET_ !== null) {
+    return NRM_TEST_SPREADSHEET_;
+  }
+  const spreadsheetId = String(
+    PropertiesService.getScriptProperties().getProperty(NRM_SPREADSHEET_ID_PROPERTY) || ''
+  ).trim();
+  if (!spreadsheetId) {
+    throw new Error('MISSING_CONFIG: ' + NRM_SPREADSHEET_ID_PROPERTY);
+  }
+  return SpreadsheetApp.openById(spreadsheetId);
 }
 
 function _nrmGetSheet_(sheetName) {
