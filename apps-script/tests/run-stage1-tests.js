@@ -65,7 +65,7 @@ class MockSheet {
   }
 
   appendRow(row) {
-    this.rows.push(row.slice());
+    this.rows.push(row.map(coerceLikeGoogleSheet));
   }
 
   deleteRow(rowNumber) {
@@ -85,8 +85,18 @@ class MockSheet {
   setValueAt(row, column, value) {
     while (this.rows.length < row) this.rows.push([]);
     while (this.rows[row - 1].length < column) this.rows[row - 1].push('');
-    this.rows[row - 1][column - 1] = value;
+    this.rows[row - 1][column - 1] = coerceLikeGoogleSheet(value);
   }
+}
+
+function coerceLikeGoogleSheet(value) {
+  // Google Sheets can persist an unformatted E.164-looking cell as a number,
+  // dropping the leading plus. Model that boundary instead of retaining every
+  // JavaScript string verbatim as the previous permissive shim did.
+  if (typeof value === 'string' && /^\+\d+$/.test(value)) {
+    return Number(value.slice(1));
+  }
+  return value;
 }
 
 class MockSpreadsheet {
@@ -132,6 +142,21 @@ global.Utilities = {
 
 global.Logger = {
   log: (message) => console.log(message)
+};
+
+global.ContentService = {
+  MimeType: { XML: 'application/xml' },
+  createTextOutput: (content) => ({
+    content,
+    mimeType: 'text/plain',
+    setMimeType(mimeType) {
+      this.mimeType = mimeType;
+      return this;
+    },
+    getContent() {
+      return this.content;
+    }
+  })
 };
 
 global.LockService = {

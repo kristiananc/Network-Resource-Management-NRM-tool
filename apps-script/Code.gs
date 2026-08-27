@@ -1,6 +1,6 @@
 /**
- * Active Stage 3 entry point. The caller supplies an authenticated,
- * normalized event; this layer does not parse Twilio form payloads.
+ * Owner-scoped normalized event entry point shared by the Stage 3 tests and
+ * the Stage 4 Twilio adapter in Twilio.gs.
  */
 
 function handleNormalizedEvent(event) {

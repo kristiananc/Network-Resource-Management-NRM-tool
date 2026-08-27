@@ -1,4 +1,4 @@
-# NRM Apps Script — Stage 1
+# NRM Apps Script
 
 Stage 1 provides the owner-scoped Google Sheets persistence foundation. It
 does not implement Twilio, AI, FastAPI, or Worker behavior.
@@ -80,3 +80,48 @@ NRM_LOCAL_API_BASE_URL=http://127.0.0.1:8765 \
 NRM_INTERNAL_API_TOKEN=replace-with-the-running-server-token \
   node apps-script/tests/run-stage3-tests.js
 ```
+
+## Stage 4 temporary Twilio webhook adapter
+
+Stage 4 accepts Twilio's form-encoded webhook in `doPost(e)`, rejects unknown
+senders before creating workflow state, and delegates authorized events to
+`handleNormalizedEvent(event)`. It returns escaped TwiML for disambiguation,
+review, commit, and error responses. The currently deployed webhook is:
+
+```text
+https://script.google.com/macros/s/AKfycbwlXlbdv2n8gI4oEqApVCmrxOgutpX2KkRG_5wZaleK45LPaBWcaP26-bDgRThiN_Iz/exec
+```
+
+Until the Stage 5 Worker becomes the authentication and owner-resolution
+boundary, add the temporary authorized-sender map to Apps Script **Script
+Properties** under `NRM_AUTHORIZED_SENDERS_JSON`. Use the frozen JSON object
+shape with E.164 keys and opaque owner IDs; do not put Twilio credentials in
+this value:
+
+```json
+{
+  "+15550000001": "own_beta_001",
+  "+15550000002": "own_beta_002"
+}
+```
+
+`resolveOwnerIdFromSender_(fromNumber)` is the single replaceable resolution
+function. Unknown senders create no Staging row and are logged as
+`UNAUTHORIZED_SENDER` under the sentinel owner ID `__UNAUTHORIZED_SENDER__`;
+the unknown sender number is omitted from log details.
+
+Run the local Stage 1 + Stage 3 regression suites and Stage 4 adapter suite:
+
+```shell
+node apps-script/tests/run-stage4-tests.js
+```
+
+Run the Stage 4 suite in the Apps Script editor with:
+
+```javascript
+runStage4Tests();
+```
+
+Twilio signature validation remains Stage 5 Worker scope. The direct Stage 4
+Apps Script endpoint is a temporary integration and must not be described as
+having Worker-grade request authentication.

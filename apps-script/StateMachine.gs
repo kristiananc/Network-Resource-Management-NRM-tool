@@ -47,7 +47,7 @@ function handleProcessing_(staging, event) {
     owner_id: staging.owner_id,
     review_id: staging.review_id,
     raw_body: staging.raw_body || '',
-    media_refs: _nrmParseJsonArray_(staging.media_json)
+    media_refs: _nrmMediaUrlsForLocalAi_(_nrmParseJsonArray_(staging.media_json))
   });
   const query = String(seed.contact_query || event.contact_query || '').trim();
   const candidates = searchContacts(query, staging.owner_id);
@@ -375,6 +375,16 @@ function _nrmParseJsonArray_(value) {
   } catch (error) {
     throw new Error('INVALID_JSON_ARRAY');
   }
+}
+
+function _nrmMediaUrlsForLocalAi_(mediaRefs) {
+  return mediaRefs.map(function (mediaRef) {
+    if (typeof mediaRef === 'string') return mediaRef;
+    if (mediaRef && Object.prototype.toString.call(mediaRef) === '[object Object]') {
+      return _nrmRequireString_(mediaRef.url, 'media_ref.url');
+    }
+    throw new Error('INVALID_MEDIA_REF');
+  });
 }
 
 function _nrmParseJsonObject_(value, fallback) {
