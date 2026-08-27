@@ -1,7 +1,5 @@
 # NRM Architecture — Stage 0 Design Freeze
 
-**Status:** Complete as of commit `b6d1bbe` (`Update original_apps_script.gs`).
-
 ## Purpose
 
 Network Resource Management (NRM) captures relationship interactions from low-friction SMS/MMS input, converts them into structured drafts with local AI, requires human review, and persists approved records in an owner-scoped shared data store.
@@ -28,21 +26,12 @@ Phone → Twilio → Cloudflare Worker → Google Apps Script → Cloudflare Tun
 - Normalizes and authenticates the downstream event.
 - Does not wait on local AI before acknowledging the webhook path.
 
-The frozen authorized-sender map shape is
-`Readonly<Record<string, string>>`: each key is an authorized sender phone
-number in E.164 format and each value is a stable, opaque `owner_id`. The
-concrete placeholder map lives in `worker/src/owner-map.ts`; real beta-user
-values replace the placeholders without changing this contract.
-
 ### Google Apps Script
 
 - Orchestrates workflow state.
 - Owns Google Sheets access.
 - Owns deterministic contact resolution and human-review routing.
 - Never derives `owner_id`.
-
-The historical command-parser in `legacy/original_apps_script.gs` is a
-read-only archive and is not loaded, imported, or used by this active path.
 
 ### Google Sheets
 
