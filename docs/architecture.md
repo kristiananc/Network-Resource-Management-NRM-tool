@@ -28,6 +28,19 @@ Phone → Twilio → Cloudflare Worker → Google Apps Script → Cloudflare Tun
 - Normalizes and authenticates the downstream event.
 - Does not wait on local AI before acknowledging the webhook path.
 
+Stage 5 implements signature validation with Twilio's official request
+validator using the Worker's exact received URL and every form parameter. The
+verified sender is resolved in `worker/src/owner-map.ts`. The Worker then sends
+Apps Script a five-minute timestamped HMAC-SHA256 envelope containing the
+normalized event. Direct form posts to Apps Script are no longer trusted.
+
+The Worker returns empty TwiML immediately and forwards to Apps Script through
+`ctx.waitUntil()`. Consequently, Apps Script's eventual TwiML is not part of
+Twilio's original response. Apps Script sends the resulting review or
+confirmation text separately through Twilio's REST Messages API using
+Script-Property credentials. Outbound failures are logged without secrets or
+message content and do not alter Staging or Interaction state.
+
 The frozen authorized-sender map shape is
 `Readonly<Record<string, string>>`: each key is an authorized sender phone
 number in E.164 format and each value is a stable, opaque `owner_id`. The
@@ -54,6 +67,12 @@ read-only archive and is not loaded, imported, or used by this active path.
 
 - Provides a managed private path to the local FastAPI service.
 - Avoids exposing the local host through direct port forwarding.
+
+The recommended later deployment is a named, remotely managed tunnel with a
+published HTTPS hostname routed to `http://localhost:8000` on the FastAPI host.
+The hostname should be protected with a Cloudflare Access service token in
+addition to FastAPI's bearer token. Stage 5 documents this path but does not
+create the tunnel or alter FastAPI.
 
 ### Local FastAPI
 

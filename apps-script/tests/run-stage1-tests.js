@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
 class MockRange {
@@ -134,10 +135,18 @@ global.DriveApp = {
 };
 
 global.Utilities = {
+  Charset: { UTF_8: 'UTF-8' },
   getUuid: () => {
     uuidCounter += 1;
     return `00000000-0000-4000-8000-${String(uuidCounter).padStart(12, '0')}`;
-  }
+  },
+  computeHmacSha256Signature: (message, secret) =>
+    Array.from(crypto.createHmac('sha256', secret).update(message, 'utf8').digest()),
+  base64Encode: (value) => Buffer.from(String(value), 'utf8').toString('base64'),
+  base64Decode: (value) => Array.from(Buffer.from(String(value), 'base64')),
+  newBlob: (bytes) => ({
+    getDataAsString: () => Buffer.from(bytes).toString('utf8')
+  })
 };
 
 global.Logger = {

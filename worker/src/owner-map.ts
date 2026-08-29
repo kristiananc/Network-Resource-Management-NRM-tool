@@ -1,20 +1,23 @@
 /**
- * NRM Stage 0 authorized-sender configuration format.
+ * Stage 5 authorization boundary.
  *
- * Configuration only — no sender-resolution application logic is implemented
- * in Stage 0.
- *
- * Replace the placeholder E.164 phone numbers and owner IDs before beta use.
- * owner_id must be stable and opaque; do not encode private user data in it.
- *
- * SECURITY NOTE:
- * This file contains no secrets. If you decide that beta-tester phone numbers
- * should not live in source control, move the same mapping shape into a
- * Worker-managed configuration/secret mechanism during deployment.
+ * Replace these placeholder E.164 numbers and opaque owner IDs before live
+ * deployment. This file contains no credentials; the Twilio auth token and
+ * Worker-to-Apps-Script HMAC key remain Cloudflare Worker secrets.
  */
-
-export const AUTHORIZED_SENDERS: Readonly<Record<string, string>> = {
+export const AUTHORIZED_SENDERS: Readonly<Record<string, string>> = Object.freeze({
   "+12025550101": "own_beta_001",
   "+12025550102": "own_beta_002",
   "+12025550103": "own_beta_003",
-};
+});
+
+export function resolveOwnerId(fromNumber: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(AUTHORIZED_SENDERS, fromNumber)) {
+    return null;
+  }
+  const ownerId = AUTHORIZED_SENDERS[fromNumber];
+  if (typeof ownerId !== "string" || !ownerId.trim()) {
+    throw new Error("INVALID_OWNER_MAP");
+  }
+  return ownerId;
+}

@@ -1,0 +1,21 @@
+{
+  "name": "nrm-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "npm run typecheck && npm test",
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "twilio": "^6.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260829.1",
+    "@types/node": "^26.4.0",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.127.1"
+  }
+}

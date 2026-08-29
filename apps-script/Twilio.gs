@@ -1,72 +1,159 @@
 /**
- * Minimal Stage 4 Twilio webhook adapter.
+ * Stage 5 Worker-authenticated webhook adapter.
  *
- * Twilio posts form-encoded parameters to doPost. This file parses that
- * transport shape, applies the temporary sender authorization boundary, and
- * delegates all workflow behavior to handleNormalizedEvent(event).
+ * Apps Script web-app events do not expose arbitrary HTTP headers, so the
+ * Worker sends a timestamped HMAC-SHA256 envelope in the JSON body. The
+ * signature is verified before the normalized event or owner_id is trusted.
  */
 
-const NRM_UNAUTHORIZED_OWNER_SENTINEL = '__UNAUTHORIZED_SENDER__';
+const NRM_WORKER_ENVELOPE_MAX_AGE_SECONDS = 300;
+var NRM_TEST_NOW_MS_ = null;
+var NRM_TEST_TWILIO_CLIENT_ = null;
 
 function doPost(e) {
   let ownerId = '';
   try {
-    const inbound = parseTwilioWebhook_(e);
-    ownerId = resolveOwnerIdFromSender_(inbound.from_number);
-    if (!ownerId) {
-      _nrmLogUnauthorizedSender_(inbound);
-      return _nrmTwiMlResponse_('This sender is not authorized.');
-    }
-
-    const normalized = _nrmNormalizedEventFromTwilio_(inbound, ownerId);
-    const openReview = _nrmFindOpenReviewForSender_(inbound.from_number, ownerId);
+    const inbound = parseAndVerifyWorkerWebhook_(e);
+    ownerId = inbound.owner_id;
+    const normalized = _nrmNormalizedEventFromWorker_(inbound);
+    const openReview = _nrmFindOpenReviewForSender_(inbound.from, ownerId);
     if (openReview) normalized.review_id = openReview.review_id;
 
     const result = handleNormalizedEvent(normalized);
-    return _nrmTwiMlResponse_(_nrmTwilioReplyMessage_(result, ownerId));
+    const replyText = _nrmTwilioReplyMessage_(result, ownerId);
+    _nrmSendTwilioReplySafely_(replyText, inbound.to, inbound.from, result, ownerId);
+    return _nrmEmptyTwiMlResponse_();
   } catch (error) {
-    _nrmLogTwilioFailureSafely_(error, ownerId);
-    return _nrmTwiMlResponse_('Unable to process this message right now. Please try again later.');
+    if (!ownerId) {
+      console.error('WORKER_AUTH_REJECTED in doPost');
+    } else {
+      _nrmLogWorkerFailureSafely_(error, ownerId);
+    }
+    return _nrmEmptyTwiMlResponse_();
   }
 }
 
-function parseTwilioWebhook_(e) {
-  if (!e || !e.parameter || Object.prototype.toString.call(e.parameter) !== '[object Object]') {
-    throw new Error('INVALID_TWILIO_REQUEST: form parameters are required.');
+function parseAndVerifyWorkerWebhook_(e) {
+  if (!e || !e.postData || typeof e.postData.contents !== 'string') {
+    throw new Error('INVALID_WORKER_REQUEST: JSON body required.');
   }
-  const parameter = e.parameter;
-  const numMediaText = String(parameter.NumMedia === undefined ? '0' : parameter.NumMedia).trim();
-  if (!/^\d+$/.test(numMediaText)) {
-    throw new Error('INVALID_TWILIO_REQUEST: NumMedia must be a non-negative integer.');
-  }
-  const numMedia = Number(numMediaText);
-  const mediaRefs = [];
-  for (let index = 0; index < numMedia; index += 1) {
-    const url = _nrmRequireString_(parameter['MediaUrl' + index], 'MediaUrl' + index);
-    mediaRefs.push({
-      url: url,
-      content_type: String(parameter['MediaContentType' + index] || '').trim()
-    });
+  const contentType = String(e.postData.type || '').toLowerCase();
+  if (contentType.indexOf('application/json') !== 0) {
+    throw new Error('INVALID_WORKER_REQUEST: application/json required.');
   }
 
-  return {
-    body: String(parameter.Body || ''),
-    from_number: _nrmRequireString_(parameter.From, 'From'),
-    to_number: _nrmRequireString_(parameter.To, 'To'),
-    message_sid: _nrmRequireString_(parameter.MessageSid, 'MessageSid'),
-    num_media: numMedia,
-    media_refs: mediaRefs
+  let envelope;
+  try {
+    envelope = JSON.parse(e.postData.contents);
+  } catch (error) {
+    throw new Error('INVALID_WORKER_REQUEST: malformed JSON envelope.');
+  }
+  if (!envelope || Object.prototype.toString.call(envelope) !== '[object Object]') {
+    throw new Error('INVALID_WORKER_REQUEST: envelope object required.');
+  }
+
+  const timestamp = _nrmRequireString_(envelope.timestamp, 'timestamp');
+  const payload = _nrmRequireString_(envelope.payload, 'payload');
+  const signature = _nrmRequireString_(envelope.signature, 'signature').toLowerCase();
+  if (!/^\d+$/.test(timestamp)) {
+    throw new Error('INVALID_WORKER_TIMESTAMP');
+  }
+  const ageSeconds = Math.abs(Math.floor(_nrmNowMs_() / 1000) - Number(timestamp));
+  if (!Number.isFinite(ageSeconds) || ageSeconds > NRM_WORKER_ENVELOPE_MAX_AGE_SECONDS) {
+    throw new Error('STALE_WORKER_REQUEST');
+  }
+  if (!/^[A-Fa-f0-9]{64}$/.test(signature)) {
+    throw new Error('INVALID_WORKER_SIGNATURE');
+  }
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(payload) || payload.length % 4 !== 0) {
+    throw new Error('INVALID_WORKER_PAYLOAD');
+  }
+
+  const expected = _nrmWorkerHmacHex_(timestamp + '.' + payload);
+  if (!_nrmConstantTimeEqual_(signature, expected)) {
+    throw new Error('INVALID_WORKER_SIGNATURE');
+  }
+
+  let event;
+  try {
+    const decoded = Utilities.newBlob(Utilities.base64Decode(payload))
+      .getDataAsString('UTF-8');
+    event = JSON.parse(decoded);
+  } catch (error) {
+    throw new Error('INVALID_WORKER_PAYLOAD');
+  }
+  return _nrmValidateWorkerEvent_(event);
+}
+
+function _nrmValidateWorkerEvent_(event) {
+  if (!event || Object.prototype.toString.call(event) !== '[object Object]') {
+    throw new Error('INVALID_WORKER_EVENT');
+  }
+  const normalized = {
+    message_sid: _nrmRequireString_(event.message_sid, 'message_sid'),
+    owner_id: _nrmRequireOwnerId_(event.owner_id),
+    from: _nrmRequireString_(event.from, 'from'),
+    to: _nrmRequireString_(event.to, 'to'),
+    body: String(event.body || ''),
+    num_media: Number(event.num_media),
+    media: event.media,
+    received_at: _nrmRequireString_(event.received_at, 'received_at')
   };
+  if (!Number.isInteger(normalized.num_media) || normalized.num_media < 0) {
+    throw new Error('INVALID_WORKER_EVENT: num_media must be a non-negative integer.');
+  }
+  if (!Array.isArray(normalized.media) || normalized.media.length !== normalized.num_media) {
+    throw new Error('INVALID_WORKER_EVENT: media length must equal num_media.');
+  }
+  normalized.media = normalized.media.map(function (entry) {
+    if (!entry || Object.prototype.toString.call(entry) !== '[object Object]') {
+      throw new Error('INVALID_WORKER_EVENT: media item must be an object.');
+    }
+    return {
+      url: _nrmRequireString_(entry.url, 'media.url'),
+      content_type: String(entry.content_type || '')
+    };
+  });
+  if (isNaN(new Date(normalized.received_at).getTime())) {
+    throw new Error('INVALID_WORKER_EVENT: received_at must be an ISO timestamp.');
+  }
+  return normalized;
 }
 
-function _nrmNormalizedEventFromTwilio_(inbound, ownerId) {
+function _nrmNormalizedEventFromWorker_(inbound) {
   return {
     message_sid: inbound.message_sid,
-    owner_id: ownerId,
-    owner_number: inbound.from_number,
+    owner_id: inbound.owner_id,
+    owner_number: inbound.from,
     body: inbound.body,
-    media_refs: inbound.media_refs
+    media_refs: inbound.media
   };
+}
+
+function _nrmWorkerHmacHex_(signingInput) {
+  const bytes = Utilities.computeHmacSha256Signature(
+    signingInput,
+    getNrmWorkerHmacSecret_(),
+    Utilities.Charset.UTF_8
+  );
+  return bytes.map(function (byte) {
+    return ('0' + ((Number(byte) + 256) % 256).toString(16)).slice(-2);
+  }).join('');
+}
+
+function _nrmConstantTimeEqual_(left, right) {
+  const a = String(left || '');
+  const b = String(right || '');
+  let mismatch = a.length ^ b.length;
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (a.charCodeAt(index) || 0) ^ (b.charCodeAt(index) || 0);
+  }
+  return mismatch === 0;
+}
+
+function _nrmNowMs_() {
+  return NRM_TEST_NOW_MS_ === null ? Date.now() : NRM_TEST_NOW_MS_;
 }
 
 function _nrmFindOpenReviewForSender_(fromNumber, ownerId) {
@@ -119,52 +206,101 @@ function _nrmTwilioReplyMessage_(result, ownerId) {
   return String(result.message || 'Message received.');
 }
 
-function _nrmTwiMlResponse_(message) {
-  const text = String(message || '');
-  const xml = text
-    ? '<?xml version="1.0" encoding="UTF-8"?><Response><Message>' +
-      _nrmEscapeXml_(text) + '</Message></Response>'
-    : '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
+function _nrmSendTwilioReplySafely_(body, fromNumber, toNumber, result, ownerId) {
+  if (!body) return false;
+  try {
+    const client = NRM_TEST_TWILIO_CLIENT_ || _nrmPostTwilioMessage_;
+    client({
+      from: _nrmRequireString_(fromNumber, 'outbound.from'),
+      to: _nrmRequireString_(toNumber, 'outbound.to'),
+      body: _nrmRequireString_(body, 'outbound.body')
+    });
+    return true;
+  } catch (error) {
+    _nrmLogOutboundSmsFailureSafely_(error, result, ownerId);
+    return false;
+  }
+}
+
+function _nrmPostTwilioMessage_(message) {
+  const config = getNrmTwilioApiConfig_();
+  const request = _nrmBuildTwilioMessageRequest_(message, config);
+  const response = UrlFetchApp.fetch(request.url, request.options);
+  const statusCode = response.getResponseCode();
+  if (statusCode < 200 || statusCode >= 300) {
+    throw new Error('TWILIO_HTTP_ERROR: status=' + statusCode);
+  }
+  let responseBody;
+  try {
+    responseBody = JSON.parse(response.getContentText());
+  } catch (error) {
+    throw new Error('TWILIO_INVALID_RESPONSE');
+  }
+  if (!responseBody || !responseBody.sid) {
+    throw new Error('TWILIO_INVALID_RESPONSE');
+  }
+  return { message_sid: String(responseBody.sid) };
+}
+
+function _nrmBuildTwilioMessageRequest_(message, config) {
+  const accountSid = _nrmRequireString_(config.account_sid, 'twilio.account_sid');
+  const authToken = _nrmRequireString_(config.auth_token, 'twilio.auth_token');
+  return {
+    url: 'https://api.twilio.com/2010-04-01/Accounts/' +
+      encodeURIComponent(accountSid) + '/Messages.json',
+    options: {
+      method: 'post',
+      contentType: 'application/x-www-form-urlencoded',
+      headers: {
+        Authorization: 'Basic ' + Utilities.base64Encode(
+          accountSid + ':' + authToken,
+          Utilities.Charset.UTF_8
+        )
+      },
+      payload: 'To=' + encodeURIComponent(_nrmRequireString_(message.to, 'outbound.to')) +
+        '&From=' + encodeURIComponent(_nrmRequireString_(message.from, 'outbound.from')) +
+        '&Body=' + encodeURIComponent(_nrmRequireString_(message.body, 'outbound.body')),
+      muteHttpExceptions: true
+    }
+  };
+}
+
+function _nrmLogOutboundSmsFailureSafely_(error, result, ownerId) {
+  console.error('OUTBOUND_SMS_FAILED');
+  try {
+    logEvent({
+      review_id: result && result.review_id ? result.review_id : '',
+      event_type: 'OUTBOUND_SMS_FAILED',
+      status: 'FAILURE',
+      details: { error_code: _nrmWorkerErrorCode_(error) }
+    }, ownerId);
+  } catch (loggingError) {
+    console.error('OUTBOUND_SMS_FAILED logging failed');
+  }
+}
+
+function _nrmEmptyTwiMlResponse_() {
+  const xml = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
   return ContentService.createTextOutput(xml).setMimeType(ContentService.MimeType.XML);
 }
 
-function _nrmEscapeXml_(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function _nrmLogUnauthorizedSender_(inbound) {
-  logEvent({
-    event_type: 'UNAUTHORIZED_SENDER',
-    status: 'FAILURE',
-    details: {
-      message_sid: inbound.message_sid,
-      destination_number: inbound.to_number
-    }
-  }, NRM_UNAUTHORIZED_OWNER_SENTINEL);
-}
-
-function _nrmLogTwilioFailureSafely_(error, ownerId) {
+function _nrmLogWorkerFailureSafely_(error, ownerId) {
   const eventType = String(error && error.message || '').indexOf('OWNER_MISMATCH') !== -1
     ? 'OWNER_MISMATCH'
-    : 'TWILIO_WEBHOOK_ERROR';
+    : 'WORKER_WEBHOOK_ERROR';
   console.error(eventType + ' in doPost');
   try {
     logEvent({
       event_type: eventType,
       status: 'FAILURE',
-      details: { error_code: _nrmTwilioErrorCode_(error) }
-    }, ownerId || NRM_UNAUTHORIZED_OWNER_SENTINEL);
+      details: { error_code: _nrmWorkerErrorCode_(error) }
+    }, ownerId);
   } catch (loggingError) {
-    console.error('TWILIO_WEBHOOK_ERROR logging failed');
+    console.error('WORKER_WEBHOOK_ERROR logging failed');
   }
 }
 
-function _nrmTwilioErrorCode_(error) {
+function _nrmWorkerErrorCode_(error) {
   const message = String(error && error.message || 'UNKNOWN_ERROR');
   const separator = message.indexOf(':');
   return (separator === -1 ? message : message.slice(0, separator)).trim() || 'UNKNOWN_ERROR';

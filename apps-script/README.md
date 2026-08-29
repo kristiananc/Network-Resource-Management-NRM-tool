@@ -111,47 +111,70 @@ NRM_INTERNAL_API_TOKEN=replace-with-the-running-server-token \
   node apps-script/tests/run-stage3-tests.js
 ```
 
-## Stage 4 temporary Twilio webhook adapter
+## Stage 5 Worker-authenticated webhook adapter
 
-Stage 4 accepts Twilio's form-encoded webhook in `doPost(e)`, rejects unknown
-senders before creating workflow state, and delegates authorized events to
-`handleNormalizedEvent(event)`. It returns escaped TwiML for disambiguation,
-review, commit, and error responses. The currently deployed webhook is:
+Stage 5 removes the temporary direct-Twilio production path. `doPost(e)` now
+accepts only a JSON envelope signed by the Cloudflare Worker with HMAC-SHA256.
+It verifies the HMAC and a five-minute timestamp window before decoding the
+normalized event, trusting `owner_id`, or creating workflow state. Direct
+Twilio form posts, malformed envelopes, changed payloads, and stale envelopes
+return empty valid TwiML and create no trusted Staging or EventLog state.
+
+The Apps Script web-app URL remains:
 
 ```text
 https://script.google.com/macros/s/AKfycbwlXlbdv2n8gI4oEqApVCmrxOgutpX2KkRG_5wZaleK45LPaBWcaP26-bDgRThiN_Iz/exec
 ```
 
-Until the Stage 5 Worker becomes the authentication and owner-resolution
-boundary, add the temporary authorized-sender map to Apps Script **Script
-Properties** under `NRM_AUTHORIZED_SENDERS_JSON`. Use the frozen JSON object
-shape with E.164 keys and opaque owner IDs; do not put Twilio credentials in
-this value:
+Set `NRM_WORKER_HMAC_SECRET` under Project Settings → Script Properties to the
+same long random secret stored as the Cloudflare Worker secret. Apps Script
+does not receive arbitrary request headers in `doPost(e)`, so the Worker signs
+`<timestamp>.<base64-payload>` and places the timestamp, payload, and signature
+in the JSON body.
 
-```json
-{
-  "+15550000001": "own_beta_001",
-  "+15550000002": "own_beta_002"
-}
+`NRM_AUTHORIZED_SENDERS_JSON` is obsolete and can be removed. Sender
+authorization and owner resolution now exist only in
+`worker/src/owner-map.ts` after Twilio signature validation.
+
+Apps Script sends state-machine replies asynchronously through Twilio's REST
+Messages API. Add these two additional Script Properties:
+
+- `TWILIO_ACCOUNT_SID`: the Twilio Account SID used in the Messages endpoint
+  and as the HTTP Basic Auth username.
+- `TWILIO_AUTH_TOKEN`: that account's Auth Token, used as the HTTP Basic Auth
+  password. This is a separate platform copy from the Worker's secret.
+
+The outbound request posts form-encoded `To`, `From`, and `Body` fields to:
+
+```text
+https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json
 ```
 
-`resolveOwnerIdFromSender_(fromNumber)` is the single replaceable resolution
-function. Unknown senders create no Staging row and are logged as
-`UNAUTHORIZED_SENDER` under the sentinel owner ID `__UNAUTHORIZED_SENDER__`;
-the unknown sender number is omitted from log details.
+`To` is the original verified sender, `From` is the Twilio number that received
+the inbound SMS, and `Body` is the existing disambiguation, review, error, or
+commit-confirmation text. Send failures are logged as `OUTBOUND_SMS_FAILED`
+without phone numbers, message text, or credentials and do not change workflow
+state. Twilio trial accounts can send only to verified recipient numbers.
 
-Run the local Stage 1 + Stage 3 regression suites and Stage 4 adapter suite:
+Run the local Stage 1 + Stage 3 regressions and Stage 5 Apps Script gateway
+suite:
 
 ```shell
 node apps-script/tests/run-stage4-tests.js
 ```
 
-Run the Stage 4 suite in the Apps Script editor with:
+Run the Stage 5 Apps Script suite in the Apps Script editor with:
 
 ```javascript
-runStage4Tests();
+runStage5AppsScriptTests();
 ```
 
-Twilio signature validation remains Stage 5 Worker scope. The direct Stage 4
-Apps Script endpoint is a temporary integration and must not be described as
-having Worker-grade request authentication.
+**Redeployment is mandatory after every Apps Script code change.** Saving code
+does not update the active `/exec` deployment. Use **Deploy → Manage
+deployments → active deployment → Edit → New version → Deploy**. Updating the
+existing deployment preserves its URL. Worker changes separately require
+`cd worker && npm run deploy`.
+
+The Worker still acknowledges Twilio immediately with empty TwiML. Apps Script
+does not depend on that response channel; it sends the generated reply as a new
+outbound Message through Twilio's REST API.

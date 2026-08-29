@@ -2,7 +2,14 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nrm-worker",
   "main": "src/index.ts",
-  "compatibility_date": "2026-08-24"
+  "compatibility_date": "2026-08-28",
+  "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": ["TWILIO_AUTH_TOKEN", "NRM_WORKER_HMAC_SECRET"]
+  },
+  "vars": {
+    "APPS_SCRIPT_WEB_APP_URL": "https://script.google.com/macros/s/AKfycbwlXlbdv2n8gI4oEqApVCmrxOgutpX2KkRG_5wZaleK45LPaBWcaP26-bDgRThiN_Iz/exec"
+  }
 
   // Do not place secrets in this file.
   // Twilio tokens and internal authentication keys belong in Cloudflare

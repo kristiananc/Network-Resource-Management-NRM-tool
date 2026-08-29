@@ -1,0 +1,3 @@
+TWILIO_AUTH_TOKEN=replace-with-twilio-auth-token
+NRM_WORKER_HMAC_SECRET=replace-with-a-long-random-shared-secret
+APPS_SCRIPT_WEB_APP_URL=https://script.google.com/macros/s/replace-with-deployment-id/exec

@@ -14,5 +14,5 @@ console.log('RUN Stage 1 regression suite');
 runStage1Tests();
 console.log('RUN Stage 3 regression suite');
 runStage3Tests();
-console.log('RUN Stage 4 Twilio adapter suite');
+console.log('RUN Stage 5 Apps Script gateway regression suite');
 runStage4Tests();

@@ -168,6 +168,16 @@ Use the secret mechanism appropriate to each platform, such as:
 - Cloudflare Worker secrets
 - local environment variables or an OS-backed/local secret store
 
+Stage 5 outbound SMS delivery requires these Apps Script **Script
+Properties** in addition to `NRM_WORKER_HMAC_SECRET`:
+
+- `TWILIO_ACCOUNT_SID`
+- `TWILIO_AUTH_TOKEN`
+
+Apps Script uses that Account SID/Auth Token pair only for HTTP Basic
+authentication to Twilio's REST Messages API. These are separate platform
+copies from the Worker's Twilio-validation secret and must never be committed.
+
 The repository should contain only variable names, documentation, and safe placeholders—not real secret values.
 
 ## Stage 0 design freeze
