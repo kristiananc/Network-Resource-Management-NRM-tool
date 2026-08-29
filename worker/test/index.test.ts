@@ -40,7 +40,7 @@ function signedRequest(
   });
 }
 
-function baseParameters(from = "+12025550101"): Record<string, string> {
+function baseParameters(from = "+19097719380"): Record<string, string> {
   return {
     Body: "Met Sarah for coffee.",
     From: from,
@@ -83,7 +83,7 @@ test("rejects an invalid Twilio signature before forwarding or owner workflow", 
     assert.match(logs.join("\n"), /"event":"BAD_TWILIO_SIGNATURE"/);
     assert.doesNotMatch(logs.join("\n"), /stage5-test-twilio-token/);
     assert.doesNotMatch(logs.join("\n"), /invalid-signature/);
-    assert.doesNotMatch(logs.join("\n"), /\+12025550101/);
+    assert.doesNotMatch(logs.join("\n"), /\+19097719380/);
   } finally {
     console.warn = originalWarn;
   }
@@ -119,7 +119,7 @@ test("rejects a verified but unmapped sender before forwarding", async () => {
 
 test("normalizes MMS, authenticates the Apps Script envelope, and preserves owner_id", async () => {
   const parameters = {
-    ...baseParameters("+12025550102"),
+    ...baseParameters("+19097719380"),
     MessageSid: "SM_STAGE5_MEDIA",
     NumMedia: "2",
     MediaUrl0: "https://api.twilio.test/media/0",
@@ -160,8 +160,8 @@ test("normalizes MMS, authenticates the Apps Script envelope, and preserves owne
   assert.equal(envelope.signature, expectedSignature);
   assert.deepEqual(JSON.parse(Buffer.from(envelope.payload, "base64").toString("utf8")), {
     message_sid: "SM_STAGE5_MEDIA",
-    owner_id: "own_beta_002",
-    from: "+12025550102",
+    owner_id: "own_live_a",
+    from: "+19097719380",
     to: "+12025550999",
     body: "Met Sarah for coffee.",
     num_media: 2,
