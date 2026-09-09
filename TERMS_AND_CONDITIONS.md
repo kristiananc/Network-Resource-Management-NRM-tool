@@ -9,4 +9,3 @@ Message and data rates may apply. Message frequency varies based on user activit
 For support, reply **HELP** or contact [YOUR SUPPORT EMAIL].
 
 To opt out of messages, reply **STOP** at any time. After opting out, no further messages will be sent unless you opt in again.
-
