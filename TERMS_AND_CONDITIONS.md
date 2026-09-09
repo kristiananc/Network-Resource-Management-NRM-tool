@@ -6,6 +6,6 @@ NRM is a personal relationship-management service that lets the account owner an
 
 Message and data rates may apply. Message frequency varies based on user activity.
 
-For support, reply **HELP** or contact [YOUR SUPPORT EMAIL].
+For support, reply **HELP** or contact kristianc.23@gmail.com.
 
 To opt out of messages, reply **STOP** at any time. After opting out, no further messages will be sent unless you opt in again.
