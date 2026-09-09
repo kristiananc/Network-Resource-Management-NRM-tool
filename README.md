@@ -9,7 +9,12 @@ historical Apps Script prototype was restored as a read-only archive in commit
 `b6d1bbe` (`Update original_apps_script.gs`), closing the final Stage 0
 documentation/archive item.
 
-No application logic should be treated as active yet. Stage 0 establishes the repository structure, schema version 1.0, enums, configuration boundaries, and the authorized-sender → `owner_id` format that later stages will implement. The file `legacy/original_apps_script.gs` is archive-only history and is not an active implementation path.
+Stages 1–5 now provide the active Sheets persistence, FastAPI scaffold, Apps
+Script state machine, Twilio integration, and secure edge gateway. Stage 0
+established the repository structure, schema version 1.0, enums, configuration
+boundaries, and authorized-sender → `owner_id` contract. The file
+`legacy/original_apps_script.gs` remains archive-only history and is not an
+active implementation path.
 
 ## Core architecture
 

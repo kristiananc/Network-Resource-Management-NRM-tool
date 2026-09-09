@@ -59,8 +59,8 @@ web-app event objects do not expose arbitrary inbound HTTP headers.
 Copy `.dev.vars.example` to the ignored `.dev.vars` file and replace every
 placeholder. Do not commit `.dev.vars`.
 
-Replace the placeholder entries in `src/owner-map.ts` with the real authorized
-E.164 sender numbers and opaque owner IDs before deployment.
+Maintain the authorized E.164 sender numbers and opaque owner IDs in
+`src/owner-map.ts` before deployment.
 
 Run:
 

@@ -44,8 +44,8 @@ message content and do not alter Staging or Interaction state.
 The frozen authorized-sender map shape is
 `Readonly<Record<string, string>>`: each key is an authorized sender phone
 number in E.164 format and each value is a stable, opaque `owner_id`. The
-concrete placeholder map lives in `worker/src/owner-map.ts`; real beta-user
-values replace the placeholders without changing this contract.
+current production mapping lives in `worker/src/owner-map.ts`; additional
+beta-user entries can be added without changing this contract.
 
 ### Google Apps Script
 
