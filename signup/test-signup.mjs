@@ -9,6 +9,7 @@ const terms = await readFile(new URL("../TERMS_AND_CONDITIONS.md", import.meta.u
 
 const CONSENT_TEXT = "I agree to receive automated SMS/MMS text messages from NRM related to logging and reviewing my personal relationship interactions. Message frequency varies. Message and data rates may apply. Reply STOP to any message to unsubscribe, or HELP for help.";
 const SIGNUP_URL = "https://kristiananc.github.io/Network-Resource-Management-NRM-tool/signup/";
+const ACCESS_REQUEST_ENDPOINT = "https://script.google.com/macros/s/AKfycbwLa22PkUFKYoiSrezaT9LDbB0s6tmENNF22Xk0zIFzshBtx9J0iGbAqrCvlBHrguKRMg/exec";
 
 test("contains required fields and exact unchecked consent", () => {
   assert.match(html, /name="name"[^>]*type="text"[^>]*required/);
@@ -25,7 +26,8 @@ test("keeps submit disabled until consent and uses separate endpoint config", ()
   assert.match(html, /submitButton\.disabled = !consent\.checked \|\| submissionPending/);
   assert.match(html, /HTMLFormElement\.prototype\.submit\.call\(form\)/);
   assert.match(html, /event\.source !== responseFrame\.contentWindow/);
-  assert.match(config, /REPLACE_WITH_ACCESS_REQUEST_WEB_APP_URL/);
+  assert.match(config, new RegExp(ACCESS_REQUEST_ENDPOINT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(config, /REPLACE_WITH_ACCESS_REQUEST_WEB_APP_URL/);
 });
 
 test("shows policy links and removes legacy form URLs", () => {
