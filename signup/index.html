@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NRM — Access Request</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #172033;
+        background: #f4f6fa;
+      }
+
+      body {
+        margin: 0;
+        padding: 2rem 1rem;
+      }
+
+      main {
+        box-sizing: border-box;
+        max-width: 42rem;
+        margin: 0 auto;
+        padding: 2rem;
+        background: #ffffff;
+        border: 1px solid #dce1eb;
+        border-radius: 0.75rem;
+        box-shadow: 0 0.75rem 2rem rgb(23 32 51 / 8%);
+      }
+
+      h1 {
+        margin-top: 0;
+      }
+
+      a {
+        color: #164e9b;
+      }
+
+      .field {
+        margin-top: 1.25rem;
+      }
+
+      .field > label {
+        display: block;
+        margin-bottom: 0.4rem;
+        font-weight: 650;
+      }
+
+      input[type="text"],
+      input[type="tel"] {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 0.7rem 0.8rem;
+        border: 1px solid #9da8ba;
+        border-radius: 0.35rem;
+        font: inherit;
+      }
+
+      .consent {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 0.7rem;
+        align-items: start;
+        margin-top: 1.5rem;
+        line-height: 1.45;
+      }
+
+      .consent input {
+        width: 1.15rem;
+        height: 1.15rem;
+        margin-top: 0.2rem;
+      }
+
+      button {
+        margin-top: 1.5rem;
+        padding: 0.7rem 1.15rem;
+        border: 0;
+        border-radius: 0.35rem;
+        color: #ffffff;
+        background: #164e9b;
+        font: inherit;
+        font-weight: 650;
+        cursor: pointer;
+      }
+
+      button:disabled {
+        background: #8993a4;
+        cursor: not-allowed;
+      }
+
+      #submission-status {
+        min-height: 1.5rem;
+        margin-top: 1rem;
+        font-weight: 600;
+      }
+
+      .success {
+        color: #146c2e;
+      }
+
+      .error {
+        color: #a12622;
+      }
+
+      iframe {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>NRM — Access Request</h1>
+      <p>
+        NRM is a private, personal relationship-tracking tool. By submitting this
+        form, you request access and consent to receive text messages as described
+        below.
+      </p>
+      <p>
+        <a href="https://github.com/kristiananc/Network-Resource-Management-NRM-tool/blob/main/PRIVACY_POLICY.md">Privacy Policy</a>
+        ·
+        <a href="https://github.com/kristiananc/Network-Resource-Management-NRM-tool/blob/main/TERMS_AND_CONDITIONS.md">Terms and Conditions</a>
+      </p>
+
+      <form id="access-request-form" method="post" target="access-request-response">
+        <div class="field">
+          <label for="name">Name</label>
+          <input id="name" name="name" type="text" autocomplete="name" maxlength="120" required>
+        </div>
+
+        <div class="field">
+          <label for="phone-number">Mobile phone number</label>
+          <input
+            id="phone-number"
+            name="phone_number"
+            type="tel"
+            autocomplete="tel"
+            inputmode="tel"
+            maxlength="16"
+            pattern="\+[1-9][0-9]{7,14}"
+            placeholder="+1XXXXXXXXXX"
+            required
+          >
+        </div>
+
+        <label class="consent" for="consent">
+          <input id="consent" name="consent" type="checkbox" value="yes" required>
+          <span>I agree to receive automated SMS/MMS text messages from NRM related to logging and reviewing my personal relationship interactions. Message frequency varies. Message and data rates may apply. Reply STOP to any message to unsubscribe, or HELP for help.</span>
+        </label>
+
+        <button id="submit-button" type="submit" disabled>Submit</button>
+        <p id="submission-status" role="status" aria-live="polite"></p>
+      </form>
+
+      <iframe id="response-frame" name="access-request-response" title="Access request response"></iframe>
+    </main>
+
+    <script src="config.js"></script>
+    <script>
+      (function () {
+        "use strict";
+
+        const form = document.getElementById("access-request-form");
+        const consent = document.getElementById("consent");
+        const submitButton = document.getElementById("submit-button");
+        const status = document.getElementById("submission-status");
+        const responseFrame = document.getElementById("response-frame");
+        let submissionPending = false;
+
+        function endpoint() {
+          return String(window.NRM_ACCESS_REQUEST_ENDPOINT || "").trim();
+        }
+
+        function updateSubmitState() {
+          submitButton.disabled = !consent.checked || submissionPending;
+        }
+
+        function showStatus(message, className) {
+          status.textContent = message;
+          status.className = className || "";
+        }
+
+        consent.addEventListener("change", updateSubmitState);
+
+        form.addEventListener("submit", function (event) {
+          event.preventDefault();
+          if (!form.reportValidity() || !consent.checked) {
+            updateSubmitState();
+            return;
+          }
+
+          const targetEndpoint = endpoint();
+          if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(targetEndpoint)) {
+            showStatus("This signup form is not configured yet. Please contact support.", "error");
+            return;
+          }
+
+          submissionPending = true;
+          updateSubmitState();
+          showStatus("Submitting your request…", "");
+          form.action = targetEndpoint;
+          HTMLFormElement.prototype.submit.call(form);
+        });
+
+        window.addEventListener("message", function (event) {
+          if (event.source !== responseFrame.contentWindow) return;
+          const data = event.data;
+          if (!data || data.source !== "nrm-access-request") return;
+
+          submissionPending = false;
+          if (data.ok === true) {
+            form.reset();
+            showStatus(data.message || "Access request received.", "success");
+          } else {
+            showStatus(data.message || "The request could not be submitted.", "error");
+          }
+          updateSubmitState();
+        });
+
+        updateSubmitState();
+      }());
+    </script>
+  </body>
+</html>
