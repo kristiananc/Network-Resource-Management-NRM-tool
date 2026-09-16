@@ -98,13 +98,22 @@ class MockSheet {
 }
 
 class MockSpreadsheet {
-  constructor(id) {
+  constructor(id, name) {
     this.id = id;
+    this.name = name;
     this.sheets = new Map();
   }
 
   getId() {
     return this.id;
+  }
+
+  getName() {
+    return this.name;
+  }
+
+  getUrl() {
+    return `https://docs.google.com/spreadsheets/d/${this.id}/edit`;
   }
 
   getSheetByName(name) {
@@ -121,14 +130,17 @@ class MockSpreadsheet {
 let spreadsheetCounter = 0;
 let uuidCounter = 0;
 const spreadsheets = new Map();
+const scriptProperties = new Map();
+const openByIdCalls = [];
 
 global.SpreadsheetApp = {
-  create: () => {
-    const spreadsheet = new MockSpreadsheet(`access-test-${++spreadsheetCounter}`);
+  create: (name) => {
+    const spreadsheet = new MockSpreadsheet(`access-test-${++spreadsheetCounter}`, name);
     spreadsheets.set(spreadsheet.getId(), spreadsheet);
     return spreadsheet;
   },
   openById: (id) => {
+    openByIdCalls.push(id);
     if (!spreadsheets.has(id)) throw new Error('SPREADSHEET_NOT_FOUND');
     return spreadsheets.get(id);
   }
@@ -136,7 +148,9 @@ global.SpreadsheetApp = {
 
 global.PropertiesService = {
   getScriptProperties: () => ({
-    getProperty: () => null
+    getProperty: (name) => scriptProperties.has(name) ? scriptProperties.get(name) : null,
+    setProperty: (name, value) => scriptProperties.set(name, String(value)),
+    deleteProperty: (name) => scriptProperties.delete(name)
   })
 };
 
@@ -187,3 +201,30 @@ load('Tests.gs');
 
 console.log('RUN runAccessRequestTests');
 runAccessRequestTests();
+
+console.log('RUN configured spreadsheet web-request test');
+const configuredSpreadsheet = SpreadsheetApp.create('NRM Production');
+scriptProperties.set('NRM_SPREADSHEET_ID', configuredSpreadsheet.getId());
+NRM_ACCESS_REQUEST_TEST_SPREADSHEET_ = null;
+NRM_ACCESS_REQUEST_TEST_NOW_ = new Date('2026-09-15T12:34:56.000Z');
+const setupResult = setupNrmAccessRequestSheet();
+if (setupResult.id !== configuredSpreadsheet.getId() || setupResult.sheet_exists !== true) {
+  throw new Error('Production setup diagnostic did not identify and provision the configured spreadsheet.');
+}
+const configuredResponse = doPost(_nrmAccessRequestEvent_(
+  'Production Path',
+  '+19097719380',
+  'yes',
+  'submission-configured-path'
+));
+const configuredSheet = configuredSpreadsheet.getSheetByName('AccessRequests');
+if (configuredResponse.getContent().indexOf('"ok":true') === -1) {
+  throw new Error('Configured spreadsheet request did not return success.');
+}
+if (openByIdCalls[openByIdCalls.length - 1] !== configuredSpreadsheet.getId()) {
+  throw new Error('Configured spreadsheet ID was not opened with SpreadsheetApp.openById().');
+}
+if (!configuredSheet || configuredSheet.getLastRow() !== 2) {
+  throw new Error('Configured spreadsheet did not receive the AccessRequests header and row.');
+}
+console.log('PASS configured spreadsheet web request: setup identified the openById target, created AccessRequests, and the request appended one row.');

@@ -4,9 +4,8 @@ This directory is a static GitHub Pages signup form. It posts only to the
 separate access-request Apps Script web app in `access-request-apps-script/`.
 It must never point at the existing Twilio-facing Apps Script deployment.
 
-After deploying the access-request web app, replace the placeholder in
-`config.js` with its `/exec` URL, then commit and push that one configuration
-change. The production page URL is expected to be:
+`config.js` contains the separate access-request deployment's `/exec` URL. The
+production page URL is:
 
 ```text
 https://kristiananc.github.io/Network-Resource-Management-NRM-tool/signup/
@@ -15,7 +14,10 @@ https://kristiananc.github.io/Network-Resource-Management-NRM-tool/signup/
 The submission uses a hidden iframe rather than `fetch(..., {mode: "no-cors"})`.
 That lets the Apps Script response send a genuine success or error acknowledgement
 back to the page with `postMessage`; an opaque `no-cors` response cannot prove
-that the row was accepted.
+that the row was accepted. Each request and response carries a one-use
+submission ID so that only the matching Apps Script acknowledgement completes
+the pending submission. If no matching response arrives within 15 seconds, the
+page shows a visible retry message and re-enables Submit.
 
 ## Enable GitHub Pages
 

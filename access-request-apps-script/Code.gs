@@ -23,14 +23,50 @@ function doGet() {
 }
 
 function doPost(e) {
+  const submissionId = _nrmAccessRequestSubmissionId_(e);
   try {
     const request = _nrmParseAccessRequest_(e);
     const saved = _nrmAppendAccessRequest_(request);
-    return _nrmAccessRequestResponse_(true, 'Access request received.', saved.request_id);
+    return _nrmAccessRequestResponse_(
+      true,
+      'Access request received.',
+      saved.request_id,
+      request.submission_id
+    );
   } catch (error) {
     console.error('ACCESS_REQUEST_REJECTED code=' + _nrmAccessRequestErrorCode_(error));
-    return _nrmAccessRequestResponse_(false, _nrmAccessRequestClientMessage_(error), '');
+    return _nrmAccessRequestResponse_(
+      false,
+      _nrmAccessRequestClientMessage_(error),
+      '',
+      submissionId
+    );
   }
+}
+
+/**
+ * Run once after configuring NRM_SPREADSHEET_ID in the separate Apps Script
+ * project. This verifies the exact production target and creates/validates the
+ * AccessRequests tab without appending a request row.
+ */
+function setupNrmAccessRequestSheet() {
+  const spreadsheet = _nrmAccessRequestSpreadsheet_();
+  const existed = spreadsheet.getSheetByName(NRM_ACCESS_REQUEST_SHEET_NAME) !== null;
+  const sheet = _nrmAccessRequestSheet_(spreadsheet);
+  const output = _nrmAccessRequestTargetDetails_(spreadsheet, sheet, existed);
+  _nrmLogAccessRequestTarget_(output);
+  return output;
+}
+
+/**
+ * Read-only diagnostic for confirming the spreadsheet used by web requests.
+ */
+function logNrmAccessRequestSpreadsheetTarget() {
+  const spreadsheet = _nrmAccessRequestSpreadsheet_();
+  const sheet = spreadsheet.getSheetByName(NRM_ACCESS_REQUEST_SHEET_NAME);
+  const output = _nrmAccessRequestTargetDetails_(spreadsheet, sheet, sheet !== null);
+  _nrmLogAccessRequestTarget_(output);
+  return output;
 }
 
 function _nrmParseAccessRequest_(e) {
@@ -41,6 +77,7 @@ function _nrmParseAccessRequest_(e) {
   const name = _nrmAccessRequestSingleParameter_(e, 'name').replace(/\s+/g, ' ').trim();
   const phoneNumber = _nrmAccessRequestSingleParameter_(e, 'phone_number').trim();
   const consent = _nrmAccessRequestSingleParameter_(e, 'consent').trim().toLowerCase();
+  const submissionId = _nrmAccessRequestSingleParameter_(e, 'submission_id').trim();
 
   if (!name || name.length > 120) {
     throw new Error('INVALID_NAME');
@@ -51,8 +88,17 @@ function _nrmParseAccessRequest_(e) {
   if (consent !== 'yes') {
     throw new Error('CONSENT_REQUIRED');
   }
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(submissionId)) {
+    throw new Error('INVALID_SUBMISSION_ID');
+  }
 
-  return { name: name, phone_number: phoneNumber };
+  return { name: name, phone_number: phoneNumber, submission_id: submissionId };
+}
+
+function _nrmAccessRequestSubmissionId_(e) {
+  if (!e || !e.parameter) return '';
+  const value = String(e.parameter.submission_id || '').trim();
+  return /^[A-Za-z0-9_-]{1,128}$/.test(value) ? value : '';
 }
 
 function _nrmAccessRequestSingleParameter_(e, name) {
@@ -90,8 +136,8 @@ function _nrmAppendAccessRequest_(request) {
   }
 }
 
-function _nrmAccessRequestSheet_() {
-  const spreadsheet = _nrmAccessRequestSpreadsheet_();
+function _nrmAccessRequestSheet_(spreadsheet) {
+  spreadsheet = spreadsheet || _nrmAccessRequestSpreadsheet_();
   let sheet = spreadsheet.getSheetByName(NRM_ACCESS_REQUEST_SHEET_NAME);
   if (!sheet) {
     sheet = spreadsheet.insertSheet(NRM_ACCESS_REQUEST_SHEET_NAME);
@@ -132,22 +178,45 @@ function _nrmAccessRequestSpreadsheet_() {
   return SpreadsheetApp.openById(spreadsheetId);
 }
 
+function _nrmAccessRequestTargetDetails_(spreadsheet, sheet, existed) {
+  return {
+    name: spreadsheet.getName(),
+    id: spreadsheet.getId(),
+    url: spreadsheet.getUrl(),
+    script_property: NRM_ACCESS_REQUEST_SPREADSHEET_ID_PROPERTY,
+    sheet_name: NRM_ACCESS_REQUEST_SHEET_NAME,
+    sheet_exists: sheet !== null,
+    sheet_was_present: existed
+  };
+}
+
+function _nrmLogAccessRequestTarget_(output) {
+  Logger.log('NRM access-request spreadsheet target');
+  Logger.log('NAME: ' + output.name);
+  Logger.log('ID: ' + output.id);
+  Logger.log('URL: ' + output.url);
+  Logger.log('SCRIPT PROPERTY: ' + output.script_property + '=' + output.id);
+  Logger.log('SHEET: ' + output.sheet_name);
+  Logger.log('SHEET EXISTS: ' + output.sheet_exists);
+}
+
 function _nrmAccessRequestNow_() {
   return NRM_ACCESS_REQUEST_TEST_NOW_ === null
     ? new Date()
     : new Date(NRM_ACCESS_REQUEST_TEST_NOW_.getTime());
 }
 
-function _nrmAccessRequestResponse_(ok, message, requestId) {
+function _nrmAccessRequestResponse_(ok, message, requestId, submissionId) {
   const payload = JSON.stringify({
     source: 'nrm-access-request',
     ok: ok,
     message: message,
-    request_id: requestId
-  });
+    request_id: requestId,
+    submission_id: submissionId
+  }).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   const html = '<!doctype html><meta charset="utf-8">' +
     '<p>' + _nrmAccessRequestEscapeHtml_(message) + '</p>' +
-    '<script>window.parent.postMessage(' + payload + ', "*");</script>';
+    '<script>window.top.postMessage(' + payload + ', "*");</script>';
   return HtmlService.createHtmlOutput(html)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

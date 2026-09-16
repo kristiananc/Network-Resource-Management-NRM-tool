@@ -10,14 +10,20 @@ project, do not replace its `doPost`, and do not reuse its deployment.
 2. Add `Code.gs`, `Tests.gs`, and `appsscript.json` from this directory.
 3. Under **Project Settings → Script Properties**, set `NRM_SPREADSHEET_ID` to
    the same production spreadsheet ID used by the main NRM Apps Script project.
-4. Run `runAccessRequestTests()` once and confirm all three tests pass. The
+4. Run `setupNrmAccessRequestSheet()` once. In the execution log, confirm that
+   `NAME`, `ID`, and `URL` identify the intended `NRM Production` spreadsheet
+   and that `SHEET EXISTS: true` is printed. This creates the `AccessRequests`
+   tab and frozen headers if the tab does not exist; it does not append a request.
+5. Run `runAccessRequestTests()` once and confirm all three tests pass. The
    suite uses temporary spreadsheets and does not touch production.
-5. Choose **Deploy → New deployment → Web app**.
-6. Set **Execute as** to **Me** and **Who has access** to **Anyone**. Authorize
+   Passing this suite alone does not prove that `NRM_SPREADSHEET_ID` is set,
+   which is why step 4 is required.
+6. Choose **Deploy → New deployment → Web app**.
+7. Set **Execute as** to **Me** and **Who has access** to **Anyone**. Authorize
    spreadsheet access when prompted, then deploy.
-7. Copy the new deployment's `/exec` URL. It must be different from the
+8. Copy the new deployment's `/exec` URL. It must be different from the
    existing Twilio-facing Apps Script URL.
-8. Put the new URL in `signup/config.js`, commit, and push that change.
+9. Put the new URL in `signup/config.js`, commit, and push that change.
 
 The first valid submission creates an `AccessRequests` tab in the configured
 production spreadsheet with these exact headers:
@@ -32,3 +38,7 @@ and an E.164 phone number before it writes anything.
 
 After any endpoint code change, deploy a **new version of this separate web
 app**. Saving code alone does not update its `/exec` deployment.
+
+To inspect the target later without creating a tab, run
+`logNrmAccessRequestSpreadsheetTarget()`. It logs the production spreadsheet
+name, ID, URL, configured property, and whether `AccessRequests` exists.

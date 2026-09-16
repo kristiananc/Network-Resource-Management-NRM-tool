@@ -34,8 +34,10 @@ function _nrmRunAccessRequestTest_(name, testFunction) {
 }
 
 function _nrmTestValidAccessRequest_() {
-  const response = doPost(_nrmAccessRequestEvent_('Ada Lovelace', '+19097719380', 'yes'));
+  const response = doPost(_nrmAccessRequestEvent_('Ada Lovelace', '+19097719380', 'yes', 'submission-valid'));
   _nrmAccessAssert_(response.getContent().indexOf('"ok":true') !== -1, 'Success response missing.');
+  _nrmAccessAssert_(response.getContent().indexOf('"submission_id":"submission-valid"') !== -1, 'Submission ID missing.');
+  _nrmAccessAssert_(response.getContent().indexOf('window.top.postMessage') !== -1, 'Top-window response missing.');
   const sheet = NRM_ACCESS_REQUEST_TEST_SPREADSHEET_.getSheetByName('AccessRequests');
   _nrmAccessAssert_(sheet !== null, 'AccessRequests tab was not created.');
   const values = sheet.getDataRange().getValues();
@@ -51,8 +53,8 @@ function _nrmTestValidAccessRequest_() {
 function _nrmTestInvalidAccessRequest_() {
   const sheet = NRM_ACCESS_REQUEST_TEST_SPREADSHEET_.getSheetByName('AccessRequests');
   const before = sheet ? sheet.getLastRow() : 0;
-  const noConsent = doPost(_nrmAccessRequestEvent_('Grace Hopper', '+12025550123', ''));
-  const badPhone = doPost(_nrmAccessRequestEvent_('Grace Hopper', '202-555-0123', 'yes'));
+  const noConsent = doPost(_nrmAccessRequestEvent_('Grace Hopper', '+12025550123', '', 'submission-no-consent'));
+  const badPhone = doPost(_nrmAccessRequestEvent_('Grace Hopper', '202-555-0123', 'yes', 'submission-bad-phone'));
   _nrmAccessAssert_(noConsent.getContent().indexOf('"ok":false') !== -1, 'Missing consent was accepted.');
   _nrmAccessAssert_(badPhone.getContent().indexOf('"ok":false') !== -1, 'Invalid phone was accepted.');
   _nrmAccessAssert_(sheet.getLastRow() === before, 'Invalid input appended a row.');
@@ -65,7 +67,7 @@ function _nrmTestAccessRequestSchemaMismatch_() {
   try {
     NRM_ACCESS_REQUEST_TEST_SPREADSHEET_ = isolated;
     isolated.insertSheet('AccessRequests').getRange(1, 1).setValue('wrong_header');
-    const response = doPost(_nrmAccessRequestEvent_('Katherine Johnson', '+12025550124', 'yes'));
+    const response = doPost(_nrmAccessRequestEvent_('Katherine Johnson', '+12025550124', 'yes', 'submission-schema'));
     _nrmAccessAssert_(response.getContent().indexOf('"ok":false') !== -1, 'Schema mismatch was accepted.');
     _nrmAccessAssert_(isolated.getSheetByName('AccessRequests').getLastRow() === 1, 'Schema mismatch wrote data.');
     return 'PASS schema mismatch protection: existing incorrect headers were not overwritten.';
@@ -75,10 +77,20 @@ function _nrmTestAccessRequestSchemaMismatch_() {
   }
 }
 
-function _nrmAccessRequestEvent_(name, phoneNumber, consent) {
+function _nrmAccessRequestEvent_(name, phoneNumber, consent, submissionId) {
   return {
-    parameter: { name: name, phone_number: phoneNumber, consent: consent },
-    parameters: { name: [name], phone_number: [phoneNumber], consent: [consent] }
+    parameter: {
+      name: name,
+      phone_number: phoneNumber,
+      consent: consent,
+      submission_id: submissionId
+    },
+    parameters: {
+      name: [name],
+      phone_number: [phoneNumber],
+      consent: [consent],
+      submission_id: [submissionId]
+    }
   };
 }
 

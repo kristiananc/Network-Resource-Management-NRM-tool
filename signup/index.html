@@ -122,6 +122,8 @@
       </p>
 
       <form id="access-request-form" method="post" target="access-request-response">
+        <input id="submission-id" name="submission_id" type="hidden">
+
         <div class="field">
           <label for="name">Name</label>
           <input id="name" name="name" type="text" autocomplete="name" maxlength="120" required>
@@ -155,69 +157,6 @@
     </main>
 
     <script src="config.js"></script>
-    <script>
-      (function () {
-        "use strict";
-
-        const form = document.getElementById("access-request-form");
-        const consent = document.getElementById("consent");
-        const submitButton = document.getElementById("submit-button");
-        const status = document.getElementById("submission-status");
-        const responseFrame = document.getElementById("response-frame");
-        let submissionPending = false;
-
-        function endpoint() {
-          return String(window.NRM_ACCESS_REQUEST_ENDPOINT || "").trim();
-        }
-
-        function updateSubmitState() {
-          submitButton.disabled = !consent.checked || submissionPending;
-        }
-
-        function showStatus(message, className) {
-          status.textContent = message;
-          status.className = className || "";
-        }
-
-        consent.addEventListener("change", updateSubmitState);
-
-        form.addEventListener("submit", function (event) {
-          event.preventDefault();
-          if (!form.reportValidity() || !consent.checked) {
-            updateSubmitState();
-            return;
-          }
-
-          const targetEndpoint = endpoint();
-          if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(targetEndpoint)) {
-            showStatus("This signup form is not configured yet. Please contact support.", "error");
-            return;
-          }
-
-          submissionPending = true;
-          updateSubmitState();
-          showStatus("Submitting your request…", "");
-          form.action = targetEndpoint;
-          HTMLFormElement.prototype.submit.call(form);
-        });
-
-        window.addEventListener("message", function (event) {
-          if (event.source !== responseFrame.contentWindow) return;
-          const data = event.data;
-          if (!data || data.source !== "nrm-access-request") return;
-
-          submissionPending = false;
-          if (data.ok === true) {
-            form.reset();
-            showStatus(data.message || "Access request received.", "success");
-          } else {
-            showStatus(data.message || "The request could not be submitted.", "error");
-          }
-          updateSubmitState();
-        });
-
-        updateSubmitState();
-      }());
-    </script>
+    <script src="signup.js"></script>
   </body>
 </html>
