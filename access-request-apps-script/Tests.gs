@@ -12,6 +12,7 @@ function runAccessRequestTests() {
     NRM_ACCESS_REQUEST_TEST_SPREADSHEET_ = spreadsheet;
     NRM_ACCESS_REQUEST_TEST_NOW_ = new Date('2026-09-15T12:34:56.000Z');
     results.push(_nrmRunAccessRequestTest_('valid request append', _nrmTestValidAccessRequest_));
+    results.push(_nrmRunAccessRequestTest_('E.164 phone preservation', _nrmTestPhoneNumberPersistence_));
     results.push(_nrmRunAccessRequestTest_('invalid request rejection', _nrmTestInvalidAccessRequest_));
     results.push(_nrmRunAccessRequestTest_('schema mismatch protection', _nrmTestAccessRequestSchemaMismatch_));
     Logger.log('PASS Access Request suite: ' + results.length + '/' + results.length + ' tests passed.');
@@ -34,7 +35,7 @@ function _nrmRunAccessRequestTest_(name, testFunction) {
 }
 
 function _nrmTestValidAccessRequest_() {
-  const response = doPost(_nrmAccessRequestEvent_('Ada Lovelace', '+19097719380', 'yes', 'submission-valid'));
+  const response = doPost(_nrmAccessRequestEvent_('Ada Lovelace', '+12025550123', 'yes', 'submission-valid'));
   _nrmAccessAssert_(response.getContent().indexOf('"ok":true') !== -1, 'Success response missing.');
   _nrmAccessAssert_(response.getContent().indexOf('"submission_id":"submission-valid"') !== -1, 'Submission ID missing.');
   _nrmAccessAssert_(response.getContent().indexOf('window.top.postMessage') !== -1, 'Top-window response missing.');
@@ -44,10 +45,26 @@ function _nrmTestValidAccessRequest_() {
   _nrmAccessAssert_(JSON.stringify(values[0]) === JSON.stringify(NRM_ACCESS_REQUEST_HEADERS), 'Headers changed.');
   _nrmAccessAssert_(values.length === 2, 'Expected exactly one request row.');
   _nrmAccessAssert_(String(values[1][1]) === 'Ada Lovelace', 'Name changed.');
-  _nrmAccessAssert_(String(values[1][2]) === '+19097719380', 'E.164 phone number changed.');
+  _nrmAccessAssert_(String(values[1][2]) === '+12025550123', 'E.164 phone number changed.');
   _nrmAccessAssert_(String(values[1][3]) === '2026-09-15T12:34:56.000Z', 'Consent timestamp changed.');
   _nrmAccessAssert_(String(values[1][4]) === 'PENDING', 'Status must default to PENDING.');
   return 'PASS valid request append: exact headers, E.164 phone, timestamp, and PENDING status persisted.';
+}
+
+function _nrmTestPhoneNumberPersistence_() {
+  const expected = '+19097719380';
+  const response = doPost(_nrmAccessRequestEvent_(
+    'Phone Preservation',
+    expected,
+    'yes',
+    'submission-phone-preservation'
+  ));
+  _nrmAccessAssert_(response.getContent().indexOf('"ok":true') !== -1, 'Phone preservation request failed.');
+  const sheet = NRM_ACCESS_REQUEST_TEST_SPREADSHEET_.getSheetByName('AccessRequests');
+  const phoneCell = sheet.getRange(sheet.getLastRow(), 3);
+  _nrmAccessAssert_(String(phoneCell.getValue()) === expected, 'Stored phone number changed.');
+  _nrmAccessAssert_(String(phoneCell.getDisplayValue()) === expected, 'Displayed phone number changed.');
+  return 'PASS E.164 phone preservation: +19097719380 stored and displayed unchanged.';
 }
 
 function _nrmTestInvalidAccessRequest_() {

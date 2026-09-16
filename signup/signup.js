@@ -34,10 +34,11 @@
   function isTrustedResponseOrigin(origin) {
     try {
       const url = new URL(origin);
+      const hostname = url.hostname.toLowerCase();
       return url.protocol === "https:" && (
-        url.hostname === "script.google.com" ||
-        url.hostname === "script.googleusercontent.com" ||
-        url.hostname.endsWith(".script.googleusercontent.com")
+        hostname === "script.google.com" ||
+        hostname === "script.googleusercontent.com" ||
+        /^[a-z0-9-]+-script\.googleusercontent\.com$/.test(hostname)
       );
     } catch (error) {
       return false;

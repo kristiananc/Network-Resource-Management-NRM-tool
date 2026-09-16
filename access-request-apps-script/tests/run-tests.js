@@ -25,6 +25,15 @@ class MockRange {
     return values;
   }
 
+  getValue() {
+    return this.sheet.valueAt(this.row, this.column);
+  }
+
+  getDisplayValue() {
+    const value = this.getValue();
+    return value === undefined || value === null ? '' : String(value);
+  }
+
   setValue(value) {
     this.sheet.setValueAt(this.row, this.column, value);
     return this;
@@ -51,6 +60,15 @@ class MockRange {
       columnCount: this.columnCount,
       format
     });
+    for (let rowOffset = 0; rowOffset < this.rowCount; rowOffset += 1) {
+      for (let columnOffset = 0; columnOffset < this.columnCount; columnOffset += 1) {
+        this.sheet.setNumberFormatAt(
+          this.row + rowOffset,
+          this.column + columnOffset,
+          format
+        );
+      }
+    }
     return this;
   }
 }
@@ -61,6 +79,7 @@ class MockSheet {
     this.rows = [];
     this.frozenRows = 0;
     this.numberFormats = [];
+    this.cellNumberFormats = new Map();
   }
 
   getLastRow() {
@@ -84,6 +103,10 @@ class MockSheet {
     this.frozenRows = count;
   }
 
+  deleteRow(rowNumber) {
+    this.rows.splice(rowNumber - 1, 1);
+  }
+
   valueAt(row, column) {
     return this.rows[row - 1] && this.rows[row - 1][column - 1] !== undefined
       ? this.rows[row - 1][column - 1]
@@ -93,8 +116,20 @@ class MockSheet {
   setValueAt(row, column, value) {
     while (this.rows.length < row) this.rows.push([]);
     while (this.rows[row - 1].length < column) this.rows[row - 1].push('');
-    this.rows[row - 1][column - 1] = value;
+    const format = this.cellNumberFormats.get(`${row}:${column}`) || '';
+    this.rows[row - 1][column - 1] = coerceLikeGoogleSheet(value, format);
   }
+
+  setNumberFormatAt(row, column, format) {
+    this.cellNumberFormats.set(`${row}:${column}`, format);
+  }
+}
+
+function coerceLikeGoogleSheet(value, format) {
+  if (format !== '@' && typeof value === 'string' && /^\+\d+$/.test(value)) {
+    return Number(value.slice(1));
+  }
+  return value;
 }
 
 class MockSpreadsheet {
@@ -143,7 +178,8 @@ global.SpreadsheetApp = {
     openByIdCalls.push(id);
     if (!spreadsheets.has(id)) throw new Error('SPREADSHEET_NOT_FOUND');
     return spreadsheets.get(id);
-  }
+  },
+  flush: () => undefined
 };
 
 global.PropertiesService = {

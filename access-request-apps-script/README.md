@@ -14,7 +14,7 @@ project, do not replace its `doPost`, and do not reuse its deployment.
    `NAME`, `ID`, and `URL` identify the intended `NRM Production` spreadsheet
    and that `SHEET EXISTS: true` is printed. This creates the `AccessRequests`
    tab and frozen headers if the tab does not exist; it does not append a request.
-5. Run `runAccessRequestTests()` once and confirm all three tests pass. The
+5. Run `runAccessRequestTests()` once and confirm all four tests pass. The
    suite uses temporary spreadsheets and does not touch production.
    Passing this suite alone does not prove that `NRM_SPREADSHEET_ID` is set,
    which is why step 4 is required.

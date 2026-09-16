@@ -124,12 +124,30 @@ function _nrmAppendAccessRequest_(request) {
       status: NRM_ACCESS_REQUEST_STATUS
     };
     const row = NRM_ACCESS_REQUEST_HEADERS.map(function (header) {
-      return record[header];
+      return header === 'phone_number' ? '' : record[header];
     });
     const nextRow = sheet.getLastRow() + 1;
     const range = sheet.getRange(nextRow, 1, 1, NRM_ACCESS_REQUEST_HEADERS.length);
     range.setNumberFormat('@');
     range.setValues([row]);
+
+    // Force the E.164 value through a separately flushed plain-text cell.
+    // This prevents Sheets from interpreting a leading plus sign as numeric
+    // input and lets us reject the write rather than retain a changed number.
+    const phoneColumn = NRM_ACCESS_REQUEST_HEADERS.indexOf('phone_number') + 1;
+    const phoneCell = sheet.getRange(nextRow, phoneColumn);
+    phoneCell.setNumberFormat('@');
+    SpreadsheetApp.flush();
+    phoneCell.setValue(record.phone_number);
+    SpreadsheetApp.flush();
+    const storedPhone = String(phoneCell.getValue());
+    const displayedPhone = String(phoneCell.getDisplayValue());
+    if (storedPhone !== record.phone_number || displayedPhone !== record.phone_number) {
+      if (String(sheet.getRange(nextRow, 1).getValue()) === record.request_id) {
+        sheet.deleteRow(nextRow);
+      }
+      throw new Error('PHONE_PERSISTENCE_MISMATCH');
+    }
     return record;
   } finally {
     lock.releaseLock();

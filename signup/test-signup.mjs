@@ -34,7 +34,7 @@ test("keeps submit disabled until consent and uses separate endpoint config", ()
   assert.doesNotMatch(config, /REPLACE_WITH_ACCESS_REQUEST_WEB_APP_URL/);
 });
 
-test("shows success after a correlated Apps Script response", () => {
+test("accepts a correlated response from an Apps Script sandbox origin", () => {
   const harness = createClientHarness();
   harness.submit();
   assert.equal(harness.form.action, ACCESS_REQUEST_ENDPOINT);
@@ -48,13 +48,29 @@ test("shows success after a correlated Apps Script response", () => {
     message: "Access request received.",
     request_id: "request-1",
     submission_id: "submission-browser-test"
-  });
+  }, "https://n-5rjxmymum3iuibwzr7n5v7lmnvehw7a2qgt4vei-0lu-script.googleusercontent.com");
 
   assert.equal(harness.status.textContent, "Access request received.");
   assert.equal(harness.status.className, "success");
   assert.equal(harness.form.resetCount, 1);
   assert.equal(harness.submitButton.disabled, true);
   assert.equal(harness.pendingTimers(), 0);
+});
+
+test("silently ignores responses from unrelated origins", () => {
+  const harness = createClientHarness();
+  harness.submit();
+  harness.message({
+    source: "nrm-access-request",
+    ok: true,
+    message: "Forged success.",
+    request_id: "request-forged",
+    submission_id: "submission-browser-test"
+  }, "https://not-googleusercontent.com");
+
+  assert.equal(harness.status.textContent, "Submitting your request…");
+  assert.equal(harness.form.resetCount, 0);
+  assert.equal(harness.pendingTimers(), 1);
 });
 
 test("shows an Apps Script failure response without resetting the form", () => {
@@ -188,9 +204,9 @@ function createClientHarness() {
       consent.dispatch("change");
       form.dispatch("submit", { preventDefault() {} });
     },
-    message(data) {
+    message(data, origin = "https://script.googleusercontent.com") {
       windowListeners.get("message")?.({
-        origin: "https://script.googleusercontent.com",
+        origin,
         data
       });
     },
