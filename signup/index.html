@@ -111,9 +111,9 @@
     <main>
       <h1>NRM — Access Request</h1>
       <p>
-        NRM is a private, personal relationship-tracking tool. By submitting this
-        form, you request access and consent to receive text messages as described
-        below.
+        NRM is a private, personal relationship-tracking tool. Submitting this
+        form requests access. Consent to receive SMS/MMS messages is optional and
+        is controlled separately by the checkbox below.
       </p>
       <p>
         <a href="https://github.com/kristiananc/Network-Resource-Management-NRM-tool/blob/main/PRIVACY_POLICY.md">Privacy Policy</a>
@@ -123,6 +123,7 @@
 
       <form id="access-request-form" method="post" target="access-request-response">
         <input id="submission-id" name="submission_id" type="hidden">
+        <input id="consent-value" name="consent" type="hidden" value="false">
 
         <div class="field">
           <label for="name">Name</label>
@@ -145,11 +146,20 @@
         </div>
 
         <label class="consent" for="consent">
-          <input id="consent" name="consent" type="checkbox" value="yes" required>
-          <span>I agree to receive automated SMS/MMS text messages from NRM related to logging and reviewing my personal relationship interactions. Message frequency varies. Message and data rates may apply. Reply STOP to any message to unsubscribe, or HELP for help.</span>
+          <input id="consent" type="checkbox">
+          <span>
+            By checking this optional box, I agree to receive automated SMS/MMS
+            text messages from NRM related to logging and reviewing my personal
+            relationship interactions. Message frequency varies. Message and data
+            rates may apply. Reply STOP to any message to unsubscribe, or HELP for
+            help. See the
+            <a href="https://github.com/kristiananc/Network-Resource-Management-NRM-tool/blob/main/PRIVACY_POLICY.md">Privacy Policy</a>
+            and
+            <a href="https://github.com/kristiananc/Network-Resource-Management-NRM-tool/blob/main/TERMS_AND_CONDITIONS.md">Terms and Conditions</a>.
+          </span>
         </label>
 
-        <button id="submit-button" type="submit" disabled>Submit</button>
+        <button id="submit-button" type="submit">Submit</button>
         <p id="submission-status" role="status" aria-live="polite"></p>
       </form>
 

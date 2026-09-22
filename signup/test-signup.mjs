@@ -9,29 +9,45 @@ const client = await readFile(new URL("./signup.js", import.meta.url), "utf8");
 const optIn = await readFile(new URL("../OPT_IN_PROCESS.md", import.meta.url), "utf8");
 const terms = await readFile(new URL("../TERMS_AND_CONDITIONS.md", import.meta.url), "utf8");
 
-const CONSENT_TEXT = "I agree to receive automated SMS/MMS text messages from NRM related to logging and reviewing my personal relationship interactions. Message frequency varies. Message and data rates may apply. Reply STOP to any message to unsubscribe, or HELP for help.";
 const SIGNUP_URL = "https://kristiananc.github.io/Network-Resource-Management-NRM-tool/signup/";
 const ACCESS_REQUEST_ENDPOINT = "https://script.google.com/macros/s/AKfycbwLa22PkUFKYoiSrezaT9LDbB0s6tmENNF22Xk0zIFzshBtx9J0iGbAqrCvlBHrguKRMg/exec";
 
-test("contains required fields and exact unchecked consent", () => {
+test("requires requester identity but leaves SMS consent optional and unchecked", () => {
   assert.match(html, /name="name"[^>]*type="text"[^>]*required/);
   assert.match(html, /name="phone_number"[\s\S]*?placeholder="\+1XXXXXXXXXX"[\s\S]*?required/);
   const checkbox = html.match(/<input id="consent"[^>]*>/)?.[0] || "";
   assert.match(checkbox, /type="checkbox"/);
-  assert.match(checkbox, /required/);
+  assert.doesNotMatch(checkbox, /\srequired(?:\s|>|=)/);
   assert.doesNotMatch(checkbox, /\schecked(?:\s|>|=)/);
-  assert.equal((html.match(new RegExp(CONSENT_TEXT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length, 1);
+  assert.match(html, /id="consent-value"[^>]*name="consent"[^>]*type="hidden"[^>]*value="false"/);
+  assert.match(html, /optional box[\s\S]*automated SMS\/MMS[\s\S]*from NRM/);
+  assert.match(html, /Message frequency varies/);
+  assert.match(html, /Message and data[\s\S]*rates may apply/);
+  assert.match(html, /Reply STOP[\s\S]*HELP for[\s\S]*help/);
 });
 
-test("keeps submit disabled until consent and uses separate endpoint config", () => {
-  assert.match(html, /id="submit-button"[^>]*disabled/);
+test("allows submission without SMS consent and uses separate endpoint config", () => {
+  const submitButton = html.match(/<button id="submit-button"[^>]*>/)?.[0] || "";
+  assert.doesNotMatch(submitButton, /\sdisabled(?:\s|>|=)/);
   assert.match(html, /id="submission-id"[^>]*name="submission_id"[^>]*type="hidden"/);
   assert.match(html, /<script src="signup\.js"><\/script>/);
-  assert.match(client, /submitButton\.disabled = !consent\.checked \|\| submissionPending/);
+  assert.match(client, /submitButton\.disabled = submissionPending/);
+  assert.match(client, /consentValueField\.value = consent\.checked \? "true" : "false"/);
   assert.match(client, /HTMLFormElement\.prototype\.submit\.call\(form\)/);
   assert.match(client, /RESPONSE_TIMEOUT_MS = 15000/);
   assert.match(config, new RegExp(ACCESS_REQUEST_ENDPOINT.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(config, /REPLACE_WITH_ACCESS_REQUEST_WEB_APP_URL/);
+});
+
+test("submits an unchecked checkbox with consent false", () => {
+  const harness = createClientHarness();
+  harness.submit({ consentChecked: false });
+
+  assert.equal(harness.form.submitCount, 1);
+  assert.deepEqual(harness.form.submittedPayload, { consent: "false" });
+  assert.equal(harness.consent.checked, false);
+  assert.equal(harness.consentValue.value, "false");
+  assert.equal(harness.status.textContent, "Submitting your request…");
 });
 
 test("accepts a correlated response from an Apps Script sandbox origin", () => {
@@ -53,7 +69,7 @@ test("accepts a correlated response from an Apps Script sandbox origin", () => {
   assert.equal(harness.status.textContent, "Access request received.");
   assert.equal(harness.status.className, "success");
   assert.equal(harness.form.resetCount, 1);
-  assert.equal(harness.submitButton.disabled, true);
+  assert.equal(harness.submitButton.disabled, false);
   assert.equal(harness.pendingTimers(), 0);
 });
 
@@ -133,12 +149,14 @@ function createClientHarness() {
   }
 
   class FakeHTMLFormElement extends FakeElement {
-    constructor(consent) {
+    constructor(consent, consentValue) {
       super();
       this.consent = consent;
+      this.consentValue = consentValue;
       this.action = "";
       this.submitCount = 0;
       this.resetCount = 0;
+      this.submittedPayload = null;
     }
 
     reportValidity() {
@@ -148,21 +166,28 @@ function createClientHarness() {
     reset() {
       this.resetCount += 1;
       this.consent.checked = false;
+      this.consentValue.value = "false";
     }
 
     submit() {
       this.submitCount += 1;
+      this.submittedPayload = {
+        consent: this.consentValue.value
+      };
     }
   }
 
   const consent = new FakeElement();
+  const consentValue = new FakeElement();
+  consentValue.value = "false";
   const submissionId = new FakeElement();
   const submitButton = new FakeElement();
   const status = new FakeElement();
-  const form = new FakeHTMLFormElement(consent);
+  const form = new FakeHTMLFormElement(consent, consentValue);
   const elements = new Map([
     ["access-request-form", form],
     ["consent", consent],
+    ["consent-value", consentValue],
     ["submission-id", submissionId],
     ["submit-button", submitButton],
     ["submission-status", status]
@@ -196,11 +221,12 @@ function createClientHarness() {
   return {
     form,
     consent,
+    consentValue,
     submissionId,
     submitButton,
     status,
-    submit() {
-      consent.checked = true;
+    submit({ consentChecked = true } = {}) {
+      consent.checked = consentChecked;
       consent.dispatch("change");
       form.dispatch("submit", { preventDefault() {} });
     },

@@ -14,7 +14,7 @@ project, do not replace its `doPost`, and do not reuse its deployment.
    `NAME`, `ID`, and `URL` identify the intended `NRM Production` spreadsheet
    and that `SHEET EXISTS: true` is printed. This creates the `AccessRequests`
    tab and frozen headers if the tab does not exist; it does not append a request.
-5. Run `runAccessRequestTests()` once and confirm all four tests pass. The
+5. Run `runAccessRequestTests()` once and confirm all six tests pass. The
    suite uses temporary spreadsheets and does not touch production.
    Passing this suite alone does not prove that `NRM_SPREADSHEET_ID` is set,
    which is why step 4 is required.
@@ -29,12 +29,23 @@ The first valid submission creates an `AccessRequests` tab in the configured
 production spreadsheet with these exact headers:
 
 ```text
-request_id | name | phone_number | consented_at | status
+request_id | name | phone_number | consented_at | status | sms_consent
 ```
 
-Every new request receives an Apps Script UUID, an Apps Script server timestamp,
-and status `PENDING`. The endpoint requires an affirmative `consent=yes` value
-and an E.164 phone number before it writes anything.
+Every new request receives an Apps Script UUID and status `PENDING`. Name and an
+E.164 phone number are required, but SMS/MMS consent is optional. The endpoint
+records `sms_consent` as a boolean for every submission. `consented_at` contains
+the Apps Script server timestamp only when `sms_consent=true`; it is blank when
+consent is false.
+
+Running `setupNrmAccessRequestSheet()` against the previous five-column schema
+adds `sms_consent` and backfills existing rows to `true`, because the previous
+endpoint rejected every submission that lacked affirmative consent.
+
+Manual review must inspect `sms_consent` before authorizing a requester. A row
+with `sms_consent=false` must never be added to `worker/src/owner-map.ts` or any
+deployed Worker owner map. Submitting the access-request form and opting into
+SMS/MMS are separate actions.
 
 After any endpoint code change, deploy a **new version of this separate web
 app**. Saving code alone does not update its `/exec` deployment.

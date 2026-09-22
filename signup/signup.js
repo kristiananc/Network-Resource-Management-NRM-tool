@@ -4,6 +4,7 @@
   const RESPONSE_TIMEOUT_MS = 15000;
   const form = document.getElementById("access-request-form");
   const consent = document.getElementById("consent");
+  const consentValueField = document.getElementById("consent-value");
   const submissionIdField = document.getElementById("submission-id");
   const submitButton = document.getElementById("submit-button");
   const status = document.getElementById("submission-status");
@@ -16,7 +17,11 @@
   }
 
   function updateSubmitState() {
-    submitButton.disabled = !consent.checked || submissionPending;
+    submitButton.disabled = submissionPending;
+  }
+
+  function updateConsentValue() {
+    consentValueField.value = consent.checked ? "true" : "false";
   }
 
   function showStatus(message, className) {
@@ -56,20 +61,24 @@
     clearResponseTimeout();
     submissionPending = false;
     pendingSubmissionId = "";
-    if (resetForm) form.reset();
+    if (resetForm) {
+      form.reset();
+      updateConsentValue();
+    }
     submissionIdField.value = "";
     showStatus(message, className);
     updateSubmitState();
   }
 
-  consent.addEventListener("change", updateSubmitState);
+  consent.addEventListener("change", updateConsentValue);
 
   form.addEventListener("submit", function (event) {
     event.preventDefault();
-    if (!form.reportValidity() || !consent.checked) {
+    if (!form.reportValidity()) {
       updateSubmitState();
       return;
     }
+    updateConsentValue();
 
     const targetEndpoint = endpoint();
     if (!/^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(targetEndpoint)) {
@@ -112,5 +121,6 @@
     }
   });
 
+  updateConsentValue();
   updateSubmitState();
 }());

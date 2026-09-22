@@ -7,6 +7,9 @@
 
 const NRM_ACCESS_REQUEST_SHEET_NAME = 'AccessRequests';
 const NRM_ACCESS_REQUEST_HEADERS = Object.freeze([
+  'request_id', 'name', 'phone_number', 'consented_at', 'status', 'sms_consent'
+]);
+const NRM_ACCESS_REQUEST_LEGACY_HEADERS = Object.freeze([
   'request_id', 'name', 'phone_number', 'consented_at', 'status'
 ]);
 const NRM_ACCESS_REQUEST_STATUS = 'PENDING';
@@ -76,7 +79,7 @@ function _nrmParseAccessRequest_(e) {
 
   const name = _nrmAccessRequestSingleParameter_(e, 'name').replace(/\s+/g, ' ').trim();
   const phoneNumber = _nrmAccessRequestSingleParameter_(e, 'phone_number').trim();
-  const consent = _nrmAccessRequestSingleParameter_(e, 'consent').trim().toLowerCase();
+  const consentValue = _nrmAccessRequestSingleParameter_(e, 'consent').trim().toLowerCase();
   const submissionId = _nrmAccessRequestSingleParameter_(e, 'submission_id').trim();
 
   if (!name || name.length > 120) {
@@ -85,14 +88,19 @@ function _nrmParseAccessRequest_(e) {
   if (!/^\+[1-9][0-9]{7,14}$/.test(phoneNumber)) {
     throw new Error('INVALID_PHONE_NUMBER');
   }
-  if (consent !== 'yes') {
-    throw new Error('CONSENT_REQUIRED');
+  if (['', 'false', 'true', 'yes'].indexOf(consentValue) === -1) {
+    throw new Error('INVALID_CONSENT');
   }
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(submissionId)) {
     throw new Error('INVALID_SUBMISSION_ID');
   }
 
-  return { name: name, phone_number: phoneNumber, submission_id: submissionId };
+  return {
+    name: name,
+    phone_number: phoneNumber,
+    sms_consent: consentValue === 'true' || consentValue === 'yes',
+    submission_id: submissionId
+  };
 }
 
 function _nrmAccessRequestSubmissionId_(e) {
@@ -120,11 +128,12 @@ function _nrmAppendAccessRequest_(request) {
       request_id: Utilities.getUuid(),
       name: request.name,
       phone_number: request.phone_number,
-      consented_at: _nrmAccessRequestNow_().toISOString(),
-      status: NRM_ACCESS_REQUEST_STATUS
+      consented_at: request.sms_consent ? _nrmAccessRequestNow_().toISOString() : '',
+      status: NRM_ACCESS_REQUEST_STATUS,
+      sms_consent: request.sms_consent
     };
     const row = NRM_ACCESS_REQUEST_HEADERS.map(function (header) {
-      return header === 'phone_number' ? '' : record[header];
+      return header === 'phone_number' || header === 'sms_consent' ? '' : record[header];
     });
     const nextRow = sheet.getLastRow() + 1;
     const range = sheet.getRange(nextRow, 1, 1, NRM_ACCESS_REQUEST_HEADERS.length);
@@ -148,6 +157,19 @@ function _nrmAppendAccessRequest_(request) {
       }
       throw new Error('PHONE_PERSISTENCE_MISMATCH');
     }
+
+    const consentColumn = NRM_ACCESS_REQUEST_HEADERS.indexOf('sms_consent') + 1;
+    const consentCell = sheet.getRange(nextRow, consentColumn);
+    consentCell.setNumberFormat('General');
+    SpreadsheetApp.flush();
+    consentCell.setValue(record.sms_consent);
+    SpreadsheetApp.flush();
+    if (consentCell.getValue() !== record.sms_consent) {
+      if (String(sheet.getRange(nextRow, 1).getValue()) === record.request_id) {
+        sheet.deleteRow(nextRow);
+      }
+      throw new Error('CONSENT_PERSISTENCE_MISMATCH');
+    }
     return record;
   } finally {
     lock.releaseLock();
@@ -168,6 +190,8 @@ function _nrmAccessRequestSheet_(spreadsheet) {
     return sheet;
   }
 
+  _nrmMigrateLegacyAccessRequestConsent_(sheet);
+
   if (sheet.getLastColumn() !== NRM_ACCESS_REQUEST_HEADERS.length) {
     throw new Error('SCHEMA_MISMATCH');
   }
@@ -180,6 +204,32 @@ function _nrmAccessRequestSheet_(spreadsheet) {
   }
   sheet.setFrozenRows(1);
   return sheet;
+}
+
+function _nrmMigrateLegacyAccessRequestConsent_(sheet) {
+  if (sheet.getLastColumn() !== NRM_ACCESS_REQUEST_LEGACY_HEADERS.length) return;
+  const existing = sheet.getRange(
+    1,
+    1,
+    1,
+    NRM_ACCESS_REQUEST_LEGACY_HEADERS.length
+  ).getValues()[0];
+  for (let index = 0; index < NRM_ACCESS_REQUEST_LEGACY_HEADERS.length; index += 1) {
+    if (existing[index] !== NRM_ACCESS_REQUEST_LEGACY_HEADERS[index]) return;
+  }
+
+  const consentColumn = NRM_ACCESS_REQUEST_HEADERS.indexOf('sms_consent') + 1;
+  sheet.getRange(1, consentColumn).setValue('sms_consent');
+  if (sheet.getLastRow() > 1) {
+    const existingRows = sheet.getLastRow() - 1;
+    const legacyConsent = Array.from({ length: existingRows }, function () {
+      return [true];
+    });
+    const consentRange = sheet.getRange(2, consentColumn, existingRows, 1);
+    consentRange.setNumberFormat('General');
+    consentRange.setValues(legacyConsent);
+  }
+  SpreadsheetApp.flush();
 }
 
 function _nrmAccessRequestSpreadsheet_() {
@@ -257,7 +307,6 @@ function _nrmAccessRequestClientMessage_(error) {
   const code = _nrmAccessRequestErrorCode_(error);
   if (code === 'INVALID_NAME') return 'Please provide a valid name.';
   if (code === 'INVALID_PHONE_NUMBER') return 'Please provide a valid E.164 phone number.';
-  if (code === 'CONSENT_REQUIRED') return 'Consent is required to request access.';
   if (code === 'ACCESS_REQUEST_BUSY') return 'The service is busy. Please try again.';
   return 'The request could not be submitted. Please contact support.';
 }
