@@ -78,9 +78,19 @@ normalized event object containing `message_sid`, `owner_id`, `owner_number`,
 `body`, and optional `review_id`, `media_refs`, `contact_query`, and `contact`
 fields. It does not parse Twilio webhook form data or legacy command strings.
 
-Set `NRM_LOCAL_API_BASE_URL` and `NRM_INTERNAL_API_TOKEN` in Apps Script Script
-Properties before using the real Stage 2 client. The token must not be placed
-in a sheet or committed file.
+Set these Script Properties before using the real local API client:
+
+- `NRM_LOCAL_API_BASE_URL`: the HTTPS Cloudflare Tunnel hostname, without a
+  trailing slash (for example, `https://nrm-api.example.com`).
+- `NRM_INTERNAL_API_TOKEN`: the FastAPI bearer token.
+- `NRM_CF_ACCESS_CLIENT_ID`: the Cloudflare Access service-token Client ID.
+- `NRM_CF_ACCESS_CLIENT_SECRET`: the Cloudflare Access service-token Client
+  Secret.
+
+The three credentials must not be placed in a sheet or committed file. Apps
+Script sends the FastAPI token as `Authorization: Bearer ...` and the Access
+credentials as `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Deployment
+instructions are in [`docs/cloudflare-tunnel-windows.md`](../docs/cloudflare-tunnel-windows.md).
 
 Run the Stage 3 Apps Script suite with:
 
@@ -101,15 +111,21 @@ client and does not require Twilio, a Worker, a Tunnel, or a live LLM:
 node apps-script/tests/run-stage3-tests.js
 ```
 
-With the Stage 2 Uvicorn server already running locally, the Node adapter can
+With the Stage 6 Uvicorn server already running locally, the Node adapter can
 also exercise the production Apps Script client contract over real HTTP:
 
 ```shell
 NRM_STAGE3_LIVE_FASTAPI=1 \
 NRM_LOCAL_API_BASE_URL=http://127.0.0.1:8765 \
 NRM_INTERNAL_API_TOKEN=replace-with-the-running-server-token \
+NRM_CF_ACCESS_CLIENT_ID=local-direct-test \
+NRM_CF_ACCESS_CLIENT_SECRET=local-direct-test \
   node apps-script/tests/run-stage3-tests.js
 ```
+
+The two `local-direct-test` values are harmless placeholders only when calling
+FastAPI directly on loopback; production Apps Script must use the real
+Cloudflare Access service-token values.
 
 ## Stage 5 Worker-authenticated webhook adapter
 

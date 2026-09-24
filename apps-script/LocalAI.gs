@@ -1,5 +1,5 @@
 /**
- * Authenticated client for the deterministic Stage 2 FastAPI endpoints.
+ * Authenticated client for the private NRM FastAPI endpoints.
  */
 
 var NRM_TEST_LOCAL_AI_CLIENT_ = null;
@@ -25,7 +25,11 @@ function _nrmFetchLocalAi_(path, payload) {
   const httpResponse = UrlFetchApp.fetch(config.base_url + path, {
     method: 'post',
     contentType: 'application/json',
-    headers: { Authorization: 'Bearer ' + config.token },
+    headers: {
+      Authorization: 'Bearer ' + config.token,
+      'CF-Access-Client-Id': config.access_client_id,
+      'CF-Access-Client-Secret': config.access_client_secret
+    },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });

@@ -5,6 +5,8 @@
 
 const NRM_LOCAL_API_URL_PROPERTY = 'NRM_LOCAL_API_BASE_URL';
 const NRM_LOCAL_API_TOKEN_PROPERTY = 'NRM_INTERNAL_API_TOKEN';
+const NRM_CF_ACCESS_CLIENT_ID_PROPERTY = 'NRM_CF_ACCESS_CLIENT_ID';
+const NRM_CF_ACCESS_CLIENT_SECRET_PROPERTY = 'NRM_CF_ACCESS_CLIENT_SECRET';
 const NRM_SPREADSHEET_ID_PROPERTY = 'NRM_SPREADSHEET_ID';
 const NRM_WORKER_HMAC_SECRET_PROPERTY = 'NRM_WORKER_HMAC_SECRET';
 const NRM_TWILIO_ACCOUNT_SID_PROPERTY = 'TWILIO_ACCOUNT_SID';
@@ -18,13 +20,30 @@ function getNrmLocalApiConfig_() {
   const baseUrl = String(properties.getProperty(NRM_LOCAL_API_URL_PROPERTY) || '')
     .replace(/\/+$/, '');
   const token = String(properties.getProperty(NRM_LOCAL_API_TOKEN_PROPERTY) || '');
+  const accessClientId = String(
+    properties.getProperty(NRM_CF_ACCESS_CLIENT_ID_PROPERTY) || ''
+  );
+  const accessClientSecret = String(
+    properties.getProperty(NRM_CF_ACCESS_CLIENT_SECRET_PROPERTY) || ''
+  );
   if (!baseUrl) {
     throw new Error('MISSING_CONFIG: ' + NRM_LOCAL_API_URL_PROPERTY);
   }
   if (!token) {
     throw new Error('MISSING_CONFIG: ' + NRM_LOCAL_API_TOKEN_PROPERTY);
   }
-  return { base_url: baseUrl, token: token };
+  if (!accessClientId) {
+    throw new Error('MISSING_CONFIG: ' + NRM_CF_ACCESS_CLIENT_ID_PROPERTY);
+  }
+  if (!accessClientSecret) {
+    throw new Error('MISSING_CONFIG: ' + NRM_CF_ACCESS_CLIENT_SECRET_PROPERTY);
+  }
+  return {
+    base_url: baseUrl,
+    token: token,
+    access_client_id: accessClientId,
+    access_client_secret: accessClientSecret
+  };
 }
 
 function getNrmWorkerHmacSecret_() {
