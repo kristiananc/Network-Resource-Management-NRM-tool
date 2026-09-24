@@ -1,0 +1,114 @@
+{
+  "schema_version": "1.0",
+  "current_date": "2026-09-23",
+  "cases": [
+    {
+      "id": "new_contact_event",
+      "type": "process",
+      "owner_id": "own_corpus_a",
+      "raw_body": "Met Maya Patel from Acme Robotics at the LA Robotics Summit today. We discussed a pilot partnership for warehouse automation.",
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "person.name": "Maya Patel",
+          "person.organization": "Acme Robotics",
+          "interaction.date": "2026-09-23",
+          "interaction.platform": "EVENT"
+        },
+        "summary_contains": ["pilot", "warehouse automation"],
+        "summary_excludes": ["Maya Patel"]
+      }
+    },
+    {
+      "id": "existing_contact_reference",
+      "type": "process",
+      "owner_id": "own_corpus_b",
+      "raw_body": "Had coffee with Sarah Chen from NAVWAR yesterday. We talked about autonomous mine detection and data integration.",
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "person.name": "Sarah Chen",
+          "person.organization": "NAVWAR",
+          "interaction.date": "2026-09-22",
+          "interaction.platform": "IN_PERSON"
+        },
+        "summary_contains": ["mine detection", "data integration"],
+        "summary_excludes": ["Sarah Chen"]
+      }
+    },
+    {
+      "id": "ambiguous_date",
+      "type": "process",
+      "owner_id": "own_corpus_a",
+      "raw_body": "Talked with Jordan Lee sometime last week about a community mentorship event.",
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "person.name": "Jordan Lee",
+          "interaction.date": null,
+          "interaction.platform": null
+        },
+        "warnings_min": 1,
+        "summary_contains": ["mentorship"],
+        "summary_excludes": ["Jordan Lee"]
+      }
+    },
+    {
+      "id": "missing_organization_call",
+      "type": "process",
+      "owner_id": "own_corpus_b",
+      "raw_body": "Called Alex Rivera today to discuss the volunteer schedule.",
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "person.name": "Alex Rivera",
+          "person.organization": null,
+          "interaction.date": "2026-09-23",
+          "interaction.platform": "CALL"
+        },
+        "summary_contains": ["volunteer schedule"],
+        "summary_excludes": ["Alex Rivera"]
+      }
+    },
+    {
+      "id": "correction_platform_only",
+      "type": "revise",
+      "owner_id": "own_corpus_a",
+      "correction": "It was a video call, not a phone call.",
+      "draft": {
+        "interaction_date": "2026-09-20",
+        "platform": "CALL",
+        "summary": "Spoke with Maya Patel about the warehouse automation pilot.",
+        "details_json": {
+          "person": {
+            "name": "Maya Patel",
+            "phone": null,
+            "email": null,
+            "organization": "Acme Robotics",
+            "context_tag": "Robotics"
+          },
+          "identity": {
+            "confidence": 0.9,
+            "evidence": ["full name and organization supplied"]
+          },
+          "warnings": []
+        },
+        "raw_body": "Called Maya Patel about the warehouse automation pilot.",
+        "media_refs": [],
+        "ai_model": "llama3.1:8b",
+        "schema_version": "1.0"
+      },
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "person.name": "Maya Patel",
+          "person.organization": "Acme Robotics",
+          "interaction.date": "2026-09-20",
+          "interaction.platform": "VIDEO_CALL",
+          "interaction.summary": "Spoke with Maya Patel about the warehouse automation pilot."
+        },
+        "warnings_exact": []
+      }
+    }
+  ]
+}

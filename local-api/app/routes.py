@@ -1,10 +1,11 @@
-"""Stage 2 FastAPI routes with deterministic dummy responses."""
+"""Authenticated FastAPI routes for health and Stage 6 text inference."""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
-from .inference import build_dummy_draft, revise_dummy_draft
+from .inference import InferenceError, process_interaction as infer_interaction
+from .inference import revise_draft as infer_revision
 from .models import (
     HealthResponse,
     ProcessInteractionRequest,
@@ -29,11 +30,15 @@ def process_interaction(
     request: ProcessInteractionRequest,
     _: Authenticated,
 ) -> ProcessInteractionResponse:
+    try:
+        draft = infer_interaction(request)
+    except InferenceError as error:
+        _raise_inference_error(error)
     return ProcessInteractionResponse(
         owner_id=request.owner_id,
         review_id=request.review_id,
         schema_version="1.0",
-        draft=build_dummy_draft(request),
+        draft=draft,
     )
 
 
@@ -42,9 +47,25 @@ def revise_draft(
     request: ReviseDraftRequest,
     _: Authenticated,
 ) -> ReviseDraftResponse:
+    try:
+        draft = infer_revision(request)
+    except InferenceError as error:
+        _raise_inference_error(error)
     return ReviseDraftResponse(
         owner_id=request.owner_id,
         review_id=request.review_id,
         schema_version="1.0",
-        draft=revise_dummy_draft(request),
+        draft=draft,
     )
+
+
+def _raise_inference_error(error: InferenceError) -> None:
+    status_code = (
+        status.HTTP_503_SERVICE_UNAVAILABLE
+        if error.code == "LOCAL_API_UNAVAILABLE"
+        else status.HTTP_502_BAD_GATEWAY
+    )
+    raise HTTPException(
+        status_code=status_code,
+        detail={"code": error.code, "message": error.message},
+    ) from error

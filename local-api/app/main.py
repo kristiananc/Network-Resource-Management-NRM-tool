@@ -1,4 +1,4 @@
-"""NRM Stage 2 FastAPI application."""
+"""NRM FastAPI application with Stage 6 local text inference."""
 
 import json
 import logging
@@ -20,8 +20,8 @@ LOGGER.propagate = False
 
 app = FastAPI(
     title="NRM Local API",
-    version="0.2.0",
-    description="Authenticated Stage 2 skeleton with deterministic dummy responses.",
+    version="0.6.0",
+    description="Authenticated local API backed by strict Ollama text extraction.",
 )
 
 
