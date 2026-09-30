@@ -83,6 +83,17 @@ Every endpoint requires `Authorization: Bearer <token>`, including `/health`.
 Apps Script configuration value that will point to the tunnel URL in a later
 stage. No tunnel is configured in Stage 6.
 
+## Run persistently on Windows
+
+The versioned Windows launcher reads secrets and runtime settings from a local,
+gitignored environment file, binds Uvicorn to `127.0.0.1:8000`, and records
+launcher, stdout, and stderr logs under `local-api/logs/`. NSSM wraps that
+launcher as an automatic Windows service and restarts it after a crash.
+
+Follow [`docs/windows-service-setup.md`](../docs/windows-service-setup.md) on
+the Windows server. The repository does not install or operate that service
+remotely.
+
 ## Unit tests
 
 The unit suite mocks Ollama so malformed JSON, schema violations, repair limits,

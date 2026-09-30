@@ -1,0 +1,3 @@
+# Local Windows service configuration and runtime logs.
+scripts/windows/local-api.env
+local-api/logs/

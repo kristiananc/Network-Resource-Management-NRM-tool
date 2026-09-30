@@ -60,8 +60,9 @@ Expected fields include `status: ok`, `service: nrm-local-api`, and
 `http://192.168.0.200:8000` as the Tunnel Service URL. Loopback is preferred
 because it avoids exposing port 8000 to the LAN.
 
-The Tunnel service keeps `cloudflared` alive, not FastAPI. Keep the existing
-headless FastAPI startup mechanism enabled separately.
+The Tunnel service keeps `cloudflared` alive, not FastAPI. Install and verify
+the separate FastAPI Windows service by following
+[`windows-service-setup.md`](windows-service-setup.md).
 
 ## 2. Put a domain on Cloudflare if needed
 
