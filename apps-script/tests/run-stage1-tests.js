@@ -39,12 +39,26 @@ class MockRange {
     }
     return this;
   }
+
+  setNumberFormat(format) {
+    for (let rowOffset = 0; rowOffset < this.rowCount; rowOffset += 1) {
+      for (let columnOffset = 0; columnOffset < this.columnCount; columnOffset += 1) {
+        this.sheet.setNumberFormatAt(
+          this.row + rowOffset,
+          this.column + columnOffset,
+          format
+        );
+      }
+    }
+    return this;
+  }
 }
 
 class MockSheet {
   constructor(name) {
     this.name = name;
     this.rows = [];
+    this.numberFormats = {};
     this.frozenRows = 0;
   }
 
@@ -86,15 +100,20 @@ class MockSheet {
   setValueAt(row, column, value) {
     while (this.rows.length < row) this.rows.push([]);
     while (this.rows[row - 1].length < column) this.rows[row - 1].push('');
-    this.rows[row - 1][column - 1] = coerceLikeGoogleSheet(value);
+    const format = this.numberFormats[row + ':' + column] || '';
+    this.rows[row - 1][column - 1] = coerceLikeGoogleSheet(value, format);
+  }
+
+  setNumberFormatAt(row, column, format) {
+    this.numberFormats[row + ':' + column] = format;
   }
 }
 
-function coerceLikeGoogleSheet(value) {
+function coerceLikeGoogleSheet(value, numberFormat) {
   // Google Sheets can persist an unformatted E.164-looking cell as a number,
   // dropping the leading plus. Model that boundary instead of retaining every
   // JavaScript string verbatim as the previous permissive shim did.
-  if (typeof value === 'string' && /^\+\d+$/.test(value)) {
+  if (numberFormat !== '@' && typeof value === 'string' && /^\+\d+$/.test(value)) {
     return Number(value.slice(1));
   }
   return value;

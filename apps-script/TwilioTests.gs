@@ -215,7 +215,7 @@ function _nrmWithStage5Spreadsheet_(callback) {
     const previousTwilioClient = NRM_TEST_TWILIO_CLIENT_;
     try {
       setupNrmSheets();
-      NRM_TEST_LOCAL_AI_CLIENT_ = _nrmStage3DummyClient_;
+      NRM_TEST_LOCAL_AI_CLIENT_ = _nrmStage5AiClient_;
       NRM_TEST_WORKER_HMAC_SECRET_ = 'stage5-apps-script-test-secret';
       NRM_TEST_NOW_MS_ = new Date('2026-08-28T19:20:21.000Z').getTime();
       NRM_TEST_TWILIO_CLIENT_ = function () { return { message_sid: 'SM_TEST_OUTBOUND' }; };
@@ -227,6 +227,24 @@ function _nrmWithStage5Spreadsheet_(callback) {
       NRM_TEST_TWILIO_CLIENT_ = previousTwilioClient;
     }
   });
+}
+
+function _nrmStage5AiClient_(path, payload) {
+  const response = _nrmStage3DummyClient_(path, payload);
+  if (path === '/process-interaction') {
+    response.draft.details_json = {
+      person: {
+        name: String(payload.raw_body || '').trim(),
+        phone: null,
+        email: null,
+        organization: null,
+        context_tag: null
+      },
+      identity: { confidence: 1, evidence: ['synthetic Stage 5 test'] },
+      warnings: []
+    };
+  }
+  return response;
 }
 
 function _nrmStage5WorkerEvent_(ownerId, fromNumber, messageSid, body, media) {

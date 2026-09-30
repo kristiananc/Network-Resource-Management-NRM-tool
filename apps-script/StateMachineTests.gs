@@ -6,7 +6,9 @@ function runStage3Tests() {
   const results = [
     _nrmRunTest_('two-owner concurrent full loop', _nrmTestConcurrentOwnerLoop_),
     _nrmRunTest_('MessageSid duplicate checks', _nrmTestMessageSidDuplicates_),
-    _nrmRunTest_('new contact guarded commit', _nrmTestNewContactCommit_),
+    _nrmRunTest_('AI person new contact guarded commit', _nrmTestNewContactCommit_),
+    _nrmRunTest_('empty staged contact recovery', _nrmTestEmptyContactBundleCommit_),
+    _nrmRunTest_('AI person existing contact resolution', _nrmTestExistingContactCommit_),
     _nrmRunTest_('OWNER_MISMATCH hard rejection', _nrmTestOwnerMismatchCommit_),
     _nrmRunTest_('Local API owner passthrough guard', _nrmTestLocalAiOwnerMismatch_),
     _nrmRunTest_('candidate and YES parsing', _nrmTestReplyParsing_),
@@ -165,22 +167,137 @@ function _nrmTestMessageSidDuplicates_() {
 
 function _nrmTestNewContactCommit_() {
   return _nrmWithStage3Spreadsheet_(function () {
+    NRM_TEST_LOCAL_AI_CLIENT_ = function (path, payload) {
+      _nrmAssert_(path === '/process-interaction', 'Unexpected new-contact AI path.');
+      return {
+        owner_id: payload.owner_id,
+        review_id: payload.review_id,
+        schema_version: '1.0',
+        draft: _nrmStage3DraftWithPerson_(payload.raw_body, {
+          name: 'Jordan New',
+          organization: 'Community Works',
+          context_tag: 'Community',
+          phone: '+15551234567',
+          email: 'jordan@example.test'
+        })
+      };
+    };
     const started = handleNormalizedEvent({
       message_sid: 'SM3_NEW_CAPTURE', owner_id: NRM_TEST_OWNER_A,
-      owner_number: '+15550000001', body: 'Met Jordan at a community event.',
-      contact_query: 'Jordan New',
-      contact: { display_name: 'Jordan New', context_tag: 'Community', email: '' }
+      owner_number: '+15550000001', body: 'Met Jordan New from Community Works today.'
     });
     _nrmAssert_(started.state === 'PENDING_REVIEW', 'New contact should go directly to review.');
+    const staged = findStagingByReviewId(started.review_id, NRM_TEST_OWNER_A);
+    const stagedBundle = _nrmParseJsonObject_(staged.draft_json, {});
+    _nrmAssert_(stagedBundle.contact.display_name === 'Jordan New', 'AI person.name was not staged as display_name.');
+    _nrmAssert_(stagedBundle.contact.organization === 'Community Works', 'AI person.organization was not staged.');
+    _nrmAssert_(stagedBundle.contact.context_tag === 'Community', 'AI person.context_tag was not staged.');
+    _nrmAssert_(stagedBundle.contact.phone === '+15551234567', 'AI person.phone was not staged.');
+    _nrmAssert_(stagedBundle.contact.email === 'jordan@example.test', 'AI person.email was not staged.');
     const committed = handleNormalizedEvent({
       message_sid: 'SM3_NEW_APPROVE', owner_id: NRM_TEST_OWNER_A,
       review_id: started.review_id, body: 'YES'
     });
     _nrmAssert_(committed.state === 'COMMITTED', 'New contact approval failed.');
-    _nrmAssert_(searchContacts('Jordan New', NRM_TEST_OWNER_A).length === 1, 'New owner A contact missing.');
+    const contacts = searchContacts('Jordan New', NRM_TEST_OWNER_A);
+    _nrmAssert_(contacts.length === 1, 'New owner A contact missing.');
+    _nrmAssert_(contacts[0].display_name === 'Jordan New', 'Committed display_name is wrong.');
+    _nrmAssert_(contacts[0].organization === 'Community Works', 'Committed organization is wrong.');
+    _nrmAssert_(contacts[0].context_tag === 'Community', 'Committed context_tag is wrong.');
+    _nrmAssert_(contacts[0].phone === '+15551234567', 'Committed phone is wrong.');
+    _nrmAssert_(contacts[0].email === 'jordan@example.test', 'Committed email is wrong.');
     _nrmAssert_(searchContacts('Jordan New', NRM_TEST_OWNER_B).length === 0, 'New contact leaked to owner B.');
-    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 1, 'New contact interaction missing.');
-    return 'PASS new contact guarded commit: owner-scoped Contact and Interaction created together after YES approval.';
+    const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);
+    _nrmAssert_(interactions.length === 1, 'New contact interaction missing.');
+    _nrmAssert_(interactions[0].record.contact_id === contacts[0].contact_id, 'Interaction did not link to created Contact.');
+    _nrmAssert_(interactions[0].record.owner_id === NRM_TEST_OWNER_A, 'Interaction owner_id changed.');
+    _nrmAssert_(findStagingByReviewId(started.review_id, NRM_TEST_OWNER_A) === null, 'Committed Staging row was not cleared.');
+    const committedEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+      return entry.record.review_id === started.review_id &&
+        entry.record.event_type === 'COMMITTED' && entry.record.status === 'SUCCESS';
+    });
+    _nrmAssert_(committedEvents.length === 1, 'COMMITTED success EventLog row missing.');
+    const committedDetails = _nrmParseJsonObject_(committedEvents[0].record.details, {});
+    _nrmAssert_(committedDetails.contact_id === contacts[0].contact_id, 'COMMITTED event has wrong contact_id.');
+    _nrmAssert_(committedDetails.interaction_id === interactions[0].record.interaction_id, 'COMMITTED event has wrong interaction_id.');
+    return 'PASS AI person new contact commit: mapped name/organization/context/phone/email, linked owner-scoped Interaction, cleared Staging, and logged COMMITTED success.';
+  });
+}
+
+function _nrmTestExistingContactCommit_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    const beforeContacts = _nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length;
+    NRM_TEST_LOCAL_AI_CLIENT_ = function (path, payload) {
+      _nrmAssert_(path === '/process-interaction', 'Unexpected existing-contact AI path.');
+      return {
+        owner_id: payload.owner_id,
+        review_id: payload.review_id,
+        schema_version: '1.0',
+        draft: _nrmStage3DraftWithPerson_(payload.raw_body, {
+          name: 'Sarah Chen', organization: 'Example Corp', context_tag: 'Work',
+          phone: null, email: null
+        })
+      };
+    };
+    const started = handleNormalizedEvent({
+      message_sid: 'SM3_EXISTING_CAPTURE', owner_id: NRM_TEST_OWNER_B,
+      owner_number: '+15550000002', body: 'Met Sarah Chen for coffee today.'
+    });
+    _nrmAssert_(started.state === 'PENDING_REVIEW', 'Existing contact did not reach review.');
+    const staged = findStagingByReviewId(started.review_id, NRM_TEST_OWNER_B);
+    _nrmAssert_(staged.selected_contact_id === 'contact_b_work', 'AI person name did not resolve the owned existing contact.');
+    const committed = handleNormalizedEvent({
+      message_sid: 'SM3_EXISTING_APPROVE', owner_id: NRM_TEST_OWNER_B,
+      review_id: started.review_id, body: 'YES'
+    });
+    _nrmAssert_(committed.state === 'COMMITTED', 'Existing-contact approval failed.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length === beforeContacts, 'Existing-contact commit created a duplicate Contact.');
+    const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_B);
+    _nrmAssert_(interactions.length === 1, 'Existing-contact Interaction missing.');
+    _nrmAssert_(interactions[0].record.contact_id === 'contact_b_work', 'Interaction linked to the wrong existing Contact.');
+    _nrmAssert_(interactions[0].record.owner_id === NRM_TEST_OWNER_B, 'Existing-contact Interaction owner_id changed.');
+    return 'PASS AI person existing contact resolution: matched within owner, created no duplicate Contact, and linked the Interaction to contact_b_work.';
+  });
+}
+
+function _nrmTestEmptyContactBundleCommit_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    const staging = createStaging({
+      message_sid: 'SM3_EMPTY_CONTACT_CAPTURE',
+      owner_number: '+15550000001',
+      state: 'PENDING_REVIEW',
+      raw_body: 'Met Taylor from Harbor Labs today.',
+      selected_contact_id: '',
+      candidate_contact_ids: [],
+      draft_json: {
+        contact: {},
+        contact_query: 'Taylor',
+        interaction: _nrmStage3DraftWithPerson_('Met Taylor from Harbor Labs today.', {
+          name: 'Taylor Reed',
+          organization: 'Harbor Labs',
+          context_tag: 'Maritime',
+          phone: null,
+          email: null
+        })
+      }
+    }, NRM_TEST_OWNER_A);
+    const committed = handleNormalizedEvent({
+      message_sid: 'SM3_EMPTY_CONTACT_APPROVE',
+      owner_id: NRM_TEST_OWNER_A,
+      review_id: staging.review_id,
+      body: 'YES'
+    });
+    _nrmAssert_(committed.state === 'COMMITTED', 'Empty staged contact did not commit from AI person.');
+    const contacts = searchContacts('Taylor Reed', NRM_TEST_OWNER_A);
+    _nrmAssert_(contacts.length === 1, 'Recovered Contact was not created.');
+    _nrmAssert_(contacts[0].display_name === 'Taylor Reed', 'Recovered display_name is wrong.');
+    _nrmAssert_(contacts[0].organization === 'Harbor Labs', 'Recovered organization is wrong.');
+    _nrmAssert_(contacts[0].context_tag === 'Maritime', 'Recovered context_tag is wrong.');
+    const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);
+    _nrmAssert_(interactions.length === 1, 'Recovered Interaction was not created.');
+    _nrmAssert_(interactions[0].record.contact_id === contacts[0].contact_id, 'Recovered Interaction link is wrong.');
+    _nrmAssert_(findStagingByReviewId(staging.review_id, NRM_TEST_OWNER_A) === null, 'Recovered Staging row was not cleared.');
+    return 'PASS empty staged contact recovery: approval reconstructed Contact from AI person before validation and committed the linked Interaction.';
   });
 }
 
@@ -311,4 +428,18 @@ function _nrmStage3DummyDraft_(rawBody, mediaRefs) {
     ai_model: 'stage2-dummy',
     schema_version: '1.0'
   };
+}
+
+function _nrmStage3DraftWithPerson_(rawBody, person) {
+  const draft = _nrmStage3DummyDraft_(rawBody, []);
+  draft.interaction_date = '2026-09-25';
+  draft.platform = 'IN_PERSON';
+  draft.summary = 'Discussed relationship follow-up.';
+  draft.details_json = {
+    person: person,
+    identity: { confidence: 1, evidence: ['synthetic Stage 3 test'] },
+    warnings: []
+  };
+  draft.ai_model = 'stage6-test-double';
+  return draft;
 }

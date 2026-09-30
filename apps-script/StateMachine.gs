@@ -49,12 +49,19 @@ function handleProcessing_(staging, event) {
     raw_body: staging.raw_body || '',
     media_refs: _nrmMediaUrlsForLocalAi_(_nrmParseJsonArray_(staging.media_json))
   });
-  const query = String(seed.contact_query || event.contact_query || '').trim();
-  const candidates = searchContacts(query, staging.owner_id);
+  const proposedContact = _nrmContactProposalFromDraft_(
+    response.draft,
+    seed.contact || {}
+  );
+  const query = _nrmContactQuery_(
+    seed.contact_query || event.contact_query,
+    proposedContact
+  );
+  const candidates = query ? searchContacts(query, staging.owner_id) : [];
   const candidateIds = candidates.map(function (contact) { return contact.contact_id; });
   const bundle = {
     interaction: response.draft,
-    contact: seed.contact || {},
+    contact: proposedContact,
     contact_query: query
   };
 
@@ -141,6 +148,10 @@ function handleRevising_(staging, event) {
     correction: _nrmRequireString_(event.body, 'correction')
   });
   bundle.interaction = response.draft;
+  bundle.contact = _nrmContactProposalFromDraft_(
+    response.draft,
+    bundle.contact || {}
+  );
   const pending = updateStaging(staging.review_id, {
     state: 'PENDING_REVIEW',
     draft_json: bundle,
@@ -183,7 +194,7 @@ function _nrmStartCapture_(event) {
     media_json: event.media_refs,
     draft_json: {
       contact: contact,
-      contact_query: event.contact_query || contact.display_name || event.body
+      contact_query: event.contact_query || contact.display_name || ''
     },
     revision_count: 0
   }, event.owner_id);
@@ -219,7 +230,10 @@ function _nrmCommitApprovedReview_(staging) {
       throw new Error('OWNER_MISMATCH: resolved contact_id does not belong to staging owner_id.');
     }
   } else {
-    contact = createContact(bundle.contact || {}, ownerId);
+    contact = createContact(
+      _nrmContactProposalFromDraft_(bundle.interaction, bundle.contact || {}),
+      ownerId
+    );
   }
 
   const draft = bundle.interaction;
@@ -354,6 +368,38 @@ function _nrmNormalizedContact_(contact, fallbackName) {
   });
   if (!normalized.display_name && fallbackName) normalized.display_name = fallbackName;
   return normalized;
+}
+
+function _nrmContactProposalFromDraft_(draft, seedContact) {
+  const seed = _nrmNormalizedContact_(seedContact || {}, '');
+  const details = _nrmParseJsonObject_(draft && draft.details_json, {});
+  const person = _nrmParseJsonObject_(details.person, {});
+  const fieldMap = {
+    name: 'display_name',
+    context_tag: 'context_tag',
+    phone: 'phone',
+    email: 'email',
+    organization: 'organization'
+  };
+  const extracted = {};
+  Object.keys(fieldMap).forEach(function (sourceField) {
+    const value = person[sourceField];
+    if (value === undefined || value === null) return;
+    const normalized = String(value).trim();
+    if (normalized) extracted[fieldMap[sourceField]] = normalized;
+  });
+  return Object.assign({}, seed, extracted);
+}
+
+function _nrmContactQuery_(explicitQuery, contact) {
+  const explicit = String(explicitQuery || '').trim();
+  if (explicit) return explicit;
+  const candidateFields = ['phone', 'email', 'display_name', 'organization'];
+  for (let index = 0; index < candidateFields.length; index += 1) {
+    const value = String(contact[candidateFields[index]] || '').trim();
+    if (value) return value;
+  }
+  return '';
 }
 
 function _nrmStateResult_(staging, extra) {

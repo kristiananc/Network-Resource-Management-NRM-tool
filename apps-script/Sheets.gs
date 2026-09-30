@@ -325,7 +325,9 @@ function _nrmAppendObject_(sheetName, data) {
   const row = headers.map(function (header) {
     return _nrmCellValue_(data[header]);
   });
-  _nrmGetSheet_(sheetName).appendRow(row);
+  const sheet = _nrmGetSheet_(sheetName);
+  const rowNumber = sheet.getLastRow() + 1;
+  _nrmWriteRowValues_(sheet, rowNumber, headers, row);
   return _nrmObjectFromRow_(headers, row);
 }
 
@@ -334,7 +336,15 @@ function _nrmWriteObjectAtRow_(sheetName, rowNumber, data) {
   const row = headers.map(function (header) {
     return _nrmCellValue_(data[header]);
   });
-  _nrmGetSheet_(sheetName).getRange(rowNumber, 1, 1, headers.length).setValues([row]);
+  _nrmWriteRowValues_(_nrmGetSheet_(sheetName), rowNumber, headers, row);
+}
+
+function _nrmWriteRowValues_(sheet, rowNumber, headers, row) {
+  const phoneIndex = headers.indexOf('phone');
+  if (phoneIndex !== -1) {
+    sheet.getRange(rowNumber, phoneIndex + 1, 1, 1).setNumberFormat('@');
+  }
+  sheet.getRange(rowNumber, 1, 1, headers.length).setValues([row]);
 }
 
 function _nrmObjectFromRow_(headers, row) {

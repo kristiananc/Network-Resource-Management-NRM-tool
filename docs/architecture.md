@@ -54,6 +54,16 @@ beta-user entries can be added without changing this contract.
 - Owns deterministic contact resolution and human-review routing.
 - Never derives `owner_id`.
 
+For a production capture, Apps Script maps the allowlisted AI identity evidence
+from `draft.details_json.person` into a proposed Contact: `name` becomes
+`display_name`, while `organization`, `context_tag`, `phone`, and `email` retain
+their corresponding Contact fields. That proposed identity supplies the
+owner-scoped contact query. A selected existing contact is reused without
+creating a duplicate; when no owned match is selected, the proposed Contact is
+created only after the user approves the staged draft. The commit path derives
+the proposal from the latest validated interaction draft again before enforcing
+required Contact fields.
+
 The historical command-parser in `legacy/original_apps_script.gs` is a
 read-only archive and is not loaded, imported, or used by this active path.
 
