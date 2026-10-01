@@ -116,6 +116,11 @@ Set-Location $RepoRoot
   -File "$RepoRoot\scripts\windows\start-local-api.ps1"
 ```
 
+The omitted `-EnvFile` argument is intentional in this dry run. It verifies the
+launcher resolves `local-api.env` from its own executable path under the exact
+no-profile, non-interactive `-File` invocation used by NSSM. If this command
+returns immediately, inspect the service log before registering the service.
+
 The command remains attached while Uvicorn runs. In a second PowerShell window,
 read the bearer token without printing it and call the authenticated endpoint:
 
@@ -151,6 +156,21 @@ Get-Content $LatestStderr.FullName -Tail 50
 Expected lines include `Starting NRM Local API` in the service log and Uvicorn
 startup/request messages in the stdout or stderr log. No bearer token should
 appear.
+
+The repository also includes a cross-platform source-contract regression. Run
+it from the repository root after changing either the launcher or this runbook:
+
+```powershell
+python -m unittest discover -s scripts/windows/tests -v
+```
+
+Expected summary:
+
+```text
+Ran 3 tests
+
+OK
+```
 
 ## 4. Download and verify NSSM
 
@@ -192,9 +212,10 @@ Expected:
 
 ## 5. Register the automatic, restartable service
 
-Run the entire block from an elevated PowerShell window. It registers the
-launcher, fixes its working directory, sets automatic startup, and explicitly
-restarts it five seconds after any unexpected exit.
+Run the entire block from an elevated PowerShell window. It registers a missing
+service or safely updates an existing stopped service, fixes its working
+directory, sets automatic startup, and explicitly restarts it five seconds
+after any unexpected exit.
 
 ```powershell
 $RepoRoot = 'C:\path\to\Network-Resource-Management-NRM-tool'
@@ -202,9 +223,15 @@ $ServiceName = 'NRMLocalAPI'
 $Nssm = 'C:\Tools\nssm\nssm.exe'
 $PowerShellExe = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $Launcher = "$RepoRoot\scripts\windows\start-local-api.ps1"
-$Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Launcher`""
+$EnvFile = "$RepoRoot\scripts\windows\local-api.env"
+$Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Launcher`" -EnvFile `"$EnvFile`""
 
-& $Nssm install $ServiceName $PowerShellExe
+$ExistingService = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+if ($null -eq $ExistingService) {
+  & $Nssm install $ServiceName $PowerShellExe
+} elseif ($ExistingService.Status -ne 'Stopped') {
+  & $Nssm stop $ServiceName
+}
 & $Nssm set $ServiceName AppDirectory $RepoRoot
 & $Nssm set $ServiceName AppParameters $Arguments
 & $Nssm set $ServiceName DisplayName 'NRM Local API'
@@ -217,8 +244,11 @@ $Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$Launch
 & $Nssm set $ServiceName AppStopMethodConsole 10000
 ```
 
-Each `nssm set` command should report `Set parameter ... for service
-NRMLocalAPI`. Confirm the stored configuration:
+For a new service, `nssm install` should report that the service was installed.
+For the service created during an earlier attempt, the block skips installation
+and replaces its broken AppParameters in place. Each `nssm set` command should
+report `Set parameter ... for service NRMLocalAPI`. Confirm the stored
+configuration:
 
 ```powershell
 & $Nssm get $ServiceName Application
@@ -230,7 +260,8 @@ NRMLocalAPI`. Confirm the stored configuration:
 ```
 
 Expected values include the Windows PowerShell executable, the repository
-root, the launcher path, `SERVICE_AUTO_START`, `Restart`, and `5000`.
+root, both the launcher and absolute env-file paths, `SERVICE_AUTO_START`,
+`Restart`, and `5000`.
 
 ## 6. Start, stop, restart, and check status
 

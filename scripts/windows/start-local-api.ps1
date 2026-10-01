@@ -1,12 +1,31 @@
 [CmdletBinding()]
 param(
-    [string]$EnvFile = (Join-Path $PSScriptRoot 'local-api.env')
+    [string]$EnvFile = ''
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
+# Automatic script-directory variables may be unavailable while parameter
+# defaults are evaluated. Resolve the executable path inside the script body.
+$ScriptPath = $MyInvocation.MyCommand.Path
+if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
+    $ScriptPath = $PSCommandPath
+}
+if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
+    throw 'Unable to resolve the start-local-api.ps1 script path.'
+}
+$ScriptDirectory = Split-Path -Parent $ScriptPath
+if ([string]::IsNullOrWhiteSpace($ScriptDirectory)) {
+    throw 'Unable to resolve the start-local-api.ps1 script directory.'
+}
+if ([string]::IsNullOrWhiteSpace($EnvFile)) {
+    $EnvFile = Join-Path $ScriptDirectory 'local-api.env'
+} elseif (-not [System.IO.Path]::IsPathRooted($EnvFile)) {
+    $EnvFile = [System.IO.Path]::GetFullPath((Join-Path $ScriptDirectory $EnvFile))
+}
+
+$RepoRoot = [System.IO.Path]::GetFullPath((Join-Path $ScriptDirectory '..\..'))
 $LogDirectory = Join-Path $RepoRoot 'local-api\logs'
 $ServiceLog = Join-Path $LogDirectory 'nrm-local-api.service.log'
 $RunStamp = (Get-Date).ToString('yyyyMMddTHHmmssfff')
