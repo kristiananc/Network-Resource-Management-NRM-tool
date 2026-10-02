@@ -1,8 +1,9 @@
-# NRM Local API — Stage 6
+# NRM Local API — Stages 6–7
 
 Stage 6 replaces the deterministic dummy extractor with private text inference
-through Ollama. It does not add vision/MMS support, a Cloudflare Tunnel, Twilio
-behavior, or Worker behavior.
+through Ollama. Stage 7 adds authenticated temporary Twilio-media downloads and
+routes image-bearing captures to a separate local vision model. The public API
+and schema-version 1.0 draft contract are unchanged.
 
 ## Ollama dependency
 
@@ -25,6 +26,7 @@ Optional local overrides:
 ```text
 NRM_OLLAMA_BASE_URL=http://192.168.0.200:11434
 NRM_OLLAMA_TEXT_MODEL=llama3.1:8b
+NRM_OLLAMA_VISION_MODEL=qwen2.5vl:3b
 NRM_OLLAMA_TIMEOUT_SECONDS=120
 ```
 
@@ -35,6 +37,78 @@ the schema is repaired once and then returns `AI_SCHEMA_ERROR`.
 
 The model never receives the request's `owner_id`. FastAPI echoes that value
 unchanged outside inference, preserving the existing tenant-boundary contract.
+
+## Vision/MMS dependency and routing
+
+The known Windows Ollama inventory (`llama3.1:8b`, `qwen2.5-coder:7b`, and
+`phi3:mini`) contains no vision model. Stage 7 therefore targets
+`qwen2.5vl:3b`, a 3.2 GB text-and-image model chosen for the CPU-only host and
+its document/text and structured-output focus. Its presence on the Windows
+machine cannot be checked from this repository environment. Install and verify
+it manually:
+
+```powershell
+ollama pull qwen2.5vl:3b
+ollama list
+```
+
+The model requires Ollama 0.7.0 or newer. `ollama list` must contain
+`qwen2.5vl:3b` before live MMS testing.
+
+Routing is based only on `media_refs`:
+
+- no media: existing `llama3.1:8b` text path, unchanged;
+- one or more media URLs: authenticated download followed by
+  `qwen2.5vl:3b` vision inference;
+- an empty caption is valid for image-only extraction;
+- a supplied caption is explicitly higher-priority semantic guidance than
+  conflicting image text.
+
+Ollama receives base64 image data through `/api/chat` and the same Pydantic JSON
+schema used by text extraction. Vision output therefore has the same
+`person`, `interaction`, `identity`, and `warnings` structure and requires no
+downstream Apps Script or Sheets change.
+
+Official references:
+
+- https://ollama.com/library/qwen2.5vl:3b
+- https://ollama.com/blog/structured-outputs
+
+## Secure Twilio media downloads
+
+Twilio media downloads require local credentials separate from the copies used
+by the Worker or Apps Script:
+
+```text
+NRM_TWILIO_ACCOUNT_SID=<Twilio Account SID>
+NRM_TWILIO_AUTH_TOKEN=<Twilio Auth Token>
+```
+
+These values belong only in `scripts/windows/local-api.env`, which is ignored
+by Git. The downloader uses HTTP Basic authentication, sends credentials only
+to HTTPS `api.twilio.com` media-resource URLs, rejects redirects, and never logs
+the URL or credentials. Missing credentials return `MEDIA_CONFIG_ERROR`.
+
+The bounds for new untrusted media input are deliberately narrower than a
+general file-upload service:
+
+- at most 4 images per request;
+- at most 5 MiB per image;
+- at most 10 MiB total;
+- only JPEG, PNG, and WebP;
+- both the HTTP content type and file signature must identify an allowed image.
+
+These formats cover business cards, contact/event screenshots, and ordinary
+photos while excluding animated images and arbitrary documents. Each request
+uses a uniquely scoped OS temporary directory. That directory is deleted in a
+`finally` block after successful inference, download failure, schema failure,
+or Ollama failure. There is no retention toggle: deletion is always the Stage 7
+default. Only the pre-existing remote `media_refs` metadata remains in the
+draft; no downloaded image is retained on local disk.
+
+Twilio reference:
+
+- https://www.twilio.com/docs/messaging/api/media-resource
 
 ## Output adaptation
 
@@ -115,6 +189,14 @@ cases:
 
 ```shell
 PYTHONPATH=local-api python3 local-api/scripts/run_revision_regression.py
+```
+
+Stage 7 media and vision tests also run as part of the full suite. Print the
+actual temporary-directory state before, during, and after successful and
+failed inference with:
+
+```shell
+PYTHONPATH=local-api python3 local-api/scripts/run_stage7_regression.py
 ```
 
 ## Live regression corpus

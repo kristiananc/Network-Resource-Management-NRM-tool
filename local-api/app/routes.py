@@ -1,4 +1,4 @@
-"""Authenticated FastAPI routes for health and Stage 6 text inference."""
+"""Authenticated FastAPI routes for local text, revision, and vision inference."""
 
 from typing import Annotated
 
@@ -62,7 +62,7 @@ def revise_draft(
 def _raise_inference_error(error: InferenceError) -> None:
     status_code = (
         status.HTTP_503_SERVICE_UNAVAILABLE
-        if error.code == "LOCAL_API_UNAVAILABLE"
+        if error.code in {"LOCAL_API_UNAVAILABLE", "MEDIA_CONFIG_ERROR"}
         else status.HTTP_502_BAD_GATEWAY
     )
     raise HTTPException(

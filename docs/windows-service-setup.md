@@ -71,18 +71,37 @@ Copy-Item "$RepoRoot\scripts\windows\local-api.env.example" `
 notepad "$RepoRoot\scripts\windows\local-api.env"
 ```
 
-Set all four required values in that file:
+Set the service values in that file. The first four run the text API; the
+Twilio credentials and vision model are additionally required before Stage 7
+MMS processing can succeed:
 
 ```text
 NRM_INTERNAL_API_TOKEN=<the existing bearer token also configured in Apps Script>
 NRM_OLLAMA_BASE_URL=http://127.0.0.1:11434
 PYTHONPATH=local-api
 NRM_PYTHON_EXE=local-api\.venv\Scripts\python.exe
+NRM_TWILIO_ACCOUNT_SID=<the Twilio Account SID>
+NRM_TWILIO_AUTH_TOKEN=<the Twilio Auth Token>
+NRM_OLLAMA_VISION_MODEL=qwen2.5vl:3b
 ```
 
 Do not generate a different bearer token unless Apps Script is updated to the
-same value. `NRM_OLLAMA_TEXT_MODEL` and `NRM_OLLAMA_TIMEOUT_SECONDS` may remain
-at their template defaults.
+same value. `NRM_OLLAMA_TEXT_MODEL`, `NRM_OLLAMA_VISION_MODEL`, and
+`NRM_OLLAMA_TIMEOUT_SECONDS` may remain at their template defaults. The Twilio
+values are local copies needed for authenticated media downloads; never copy
+them into a tracked file.
+
+Install the Stage 7 vision model before starting MMS verification:
+
+```powershell
+ollama --version
+ollama pull qwen2.5vl:3b
+ollama list | Select-String 'qwen2.5vl:3b'
+```
+
+Expected: Ollama is version 0.7.0 or newer, the pull completes successfully,
+and the final command prints a `qwen2.5vl:3b` row. The repository cannot run or
+verify these Windows-hosted commands remotely.
 
 Restrict the secret file to the current administrator, Administrators, and the
 LocalSystem account used by the service:

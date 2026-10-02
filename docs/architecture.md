@@ -91,6 +91,18 @@ create the tunnel or alter FastAPI.
 - Accepts `owner_id` only as opaque passthrough/traceability data.
 - Does not make tenant or contact-identity decisions.
 
+Stage 7 routes requests with no `media_refs` through the existing
+`llama3.1:8b` text path and requests with one or more media URLs through
+`qwen2.5vl:3b`. Media-bearing requests are downloaded from exact Twilio media
+resource URLs with local HTTP Basic credentials. The downloader accepts at most
+four JPEG/PNG/WebP images, enforces 5 MiB per-file and 10 MiB aggregate limits,
+checks both HTTP type and file signature, rejects redirects, and sends
+credentials only to the configured account's `api.twilio.com` resource path.
+Each request uses a scoped temporary directory that is removed after success or
+failure; local retention is not configurable. Vision outputs use the same
+schema-version 1.0 contract as text outputs, and captions are higher-priority
+semantic evidence than conflicting image text.
+
 ### Local LLM/VLM
 
 - Extracts evidence into strict structured drafts.

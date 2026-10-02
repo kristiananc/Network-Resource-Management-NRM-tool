@@ -1,4 +1,4 @@
-"""Pydantic contracts for the NRM local API and Stage 6 AI output."""
+"""Pydantic contracts for the NRM local API and schema-version 1.0 AI output."""
 
 from datetime import date
 from enum import Enum

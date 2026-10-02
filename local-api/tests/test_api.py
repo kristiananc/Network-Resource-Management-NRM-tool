@@ -96,7 +96,7 @@ class Stage6ApiTests(unittest.TestCase):
                 "owner_id": owner_id,
                 "review_id": "review_process_001",
                 "raw_body": "Met Sarah for coffee.",
-                "media_refs": ["media://example-1"],
+                "media_refs": [],
             },
         )
         self.assertEqual(response.status_code, 200)
@@ -125,7 +125,7 @@ class Stage6ApiTests(unittest.TestCase):
                         "warnings": [],
                     },
                     "raw_body": "Met Sarah for coffee.",
-                    "media_refs": ["media://example-1"],
+                    "media_refs": [],
                     "ai_model": "llama3.1:8b",
                     "schema_version": "1.0",
                 },
@@ -138,7 +138,7 @@ class Stage6ApiTests(unittest.TestCase):
                 "owner_id": owner_id,
                 "review_id": "review_process_001",
                 "raw_body": "Met Sarah for coffee.",
-                "media_refs": ["media://example-1"],
+                "media_refs": [],
             },
         )
         self.assertEqual(repeated.json(), response.json())
@@ -256,6 +256,46 @@ class Stage6ApiTests(unittest.TestCase):
                         }
                     },
                 )
+
+    def test_missing_local_media_credentials_return_503(self) -> None:
+        media_url = (
+            "https://api.twilio.com/2010-04-01/Accounts/"
+            "AC00000000000000000000000000000000/"
+            "Messages/MM11111111111111111111111111111111/"
+            "Media/ME22222222222222222222222222222222"
+        )
+        with patch.dict(
+            os.environ,
+            {
+                "NRM_INTERNAL_API_TOKEN": TOKEN,
+                "NRM_TWILIO_ACCOUNT_SID": "",
+                "NRM_TWILIO_AUTH_TOKEN": "",
+            },
+            clear=False,
+        ):
+            response = self.client.post(
+                "/process-interaction",
+                headers=AUTH,
+                json={
+                    "owner_id": "own_media_config",
+                    "review_id": "review_media_config",
+                    "raw_body": "Business card",
+                    "media_refs": [media_url],
+                },
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(
+            response.json(),
+            {
+                "detail": {
+                    "code": "MEDIA_CONFIG_ERROR",
+                    "message": (
+                        "Required local media credential is missing: "
+                        "NRM_TWILIO_ACCOUNT_SID."
+                    ),
+                }
+            },
+        )
 
     def test_structured_logging_contains_metadata_not_secrets_or_body(self) -> None:
         with self.assertLogs("nrm.api", level="INFO") as captured:
