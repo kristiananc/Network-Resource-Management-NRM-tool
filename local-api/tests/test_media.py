@@ -14,6 +14,7 @@ from app.media import (
     MAX_MEDIA_BYTES,
     MAX_TOTAL_MEDIA_BYTES,
     MediaError,
+    _validate_twilio_media_url,
     temporary_twilio_media,
 )
 
@@ -31,6 +32,70 @@ MEDIA_ENV = {
 
 
 class Stage7MediaTests(unittest.TestCase):
+    def test_production_shape_twilio_media_url_passes_validation(self) -> None:
+        media_url = (
+            "https://api.twilio.com/2010-04-01/Accounts/"
+            "AC00000000000000000000000000000000/"
+            "Messages/MM11111111111111111111111111111111/"
+            "Media/ME22222222222222222222222222222222"
+        )
+        _validate_twilio_media_url(
+            media_url,
+            expected_account_sid="AC00000000000000000000000000000000",
+        )
+
+    def test_production_shape_url_and_reported_jpeg_size_download_successfully(self) -> None:
+        media_url = (
+            "https://api.twilio.com/2010-04-01/Accounts/"
+            "AC00000000000000000000000000000000/"
+            "Messages/MM11111111111111111111111111111111/"
+            "Media/ME22222222222222222222222222222222"
+        )
+        jpeg_bytes = b"\xff\xd8\xff" + b"x" * (742786 - 3)
+        client = httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: httpx.Response(
+                    200,
+                    headers={"content-type": "image/jpeg"},
+                    content=jpeg_bytes,
+                )
+            )
+        )
+        environment = {
+            "NRM_TWILIO_ACCOUNT_SID": "AC00000000000000000000000000000000",
+            "NRM_TWILIO_AUTH_TOKEN": "local-test-auth-token",
+        }
+        with tempfile.TemporaryDirectory() as root_name, patch.dict(
+            os.environ, environment, clear=False
+        ):
+            root = Path(root_name)
+            with temporary_twilio_media(
+                [media_url], client=client, temp_root=root
+            ) as downloaded:
+                self.assertEqual(downloaded[0].content_type, "image/jpeg")
+                self.assertEqual(downloaded[0].size_bytes, 742786)
+                self.assertTrue(downloaded[0].path.exists())
+            self.assertEqual(list(root.iterdir()), [])
+        client.close()
+
+    def test_temp_directory_permission_failure_is_categorized(self) -> None:
+        client = httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _request: self.fail("storage failure must happen first")
+            )
+        )
+        with patch.dict(os.environ, MEDIA_ENV, clear=False), patch(
+            "app.media.tempfile.mkdtemp",
+            side_effect=PermissionError("service account cannot write temp directory"),
+        ):
+            with self.assertRaises(MediaError) as captured:
+                with temporary_twilio_media([MEDIA_URL], client=client):
+                    self.fail("storage failure must not yield media")
+        self.assertEqual(captured.exception.code, "MEDIA_STORAGE_FAILED")
+        self.assertEqual(captured.exception.stage, "media_storage")
+        self.assertIn("PermissionError", captured.exception.diagnostic)
+        client.close()
+
     def test_authenticated_download_exists_only_inside_context(self) -> None:
         expected_auth = "Basic " + base64.b64encode(
             b"AC00000000000000000000000000000000:local-test-auth-token"

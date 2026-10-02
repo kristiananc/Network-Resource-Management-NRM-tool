@@ -37,10 +37,19 @@ TWILIO_MEDIA_PATH = re.compile(
 class MediaError(RuntimeError):
     """A safe, categorized media-processing failure."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        stage: str = "media",
+        diagnostic: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.stage = stage
+        self.diagnostic = diagnostic or message
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,7 @@ def temporary_twilio_media(
         raise MediaError(
             "MEDIA_LIMIT_EXCEEDED",
             f"At most {MAX_MEDIA_ITEMS} images may be processed per request.",
+            stage="media_validation",
         )
 
     account_sid = _required_secret(TWILIO_ACCOUNT_SID_ENV)
@@ -77,12 +87,20 @@ def temporary_twilio_media(
         timeout=httpx.Timeout(DOWNLOAD_TIMEOUT_SECONDS, connect=10.0),
         follow_redirects=False,
     )
-    temp_directory = Path(
-        tempfile.mkdtemp(
-            prefix="nrm-media-",
-            dir=str(temp_root) if temp_root is not None else None,
+    try:
+        temp_directory = Path(
+            tempfile.mkdtemp(
+                prefix="nrm-media-",
+                dir=str(temp_root) if temp_root is not None else None,
+            )
         )
-    )
+    except OSError as error:
+        raise MediaError(
+            "MEDIA_STORAGE_FAILED",
+            "A temporary media directory could not be created.",
+            stage="media_storage",
+            diagnostic=_safe_exception_detail(error),
+        ) from error
 
     try:
         downloaded: list[DownloadedMedia] = []
@@ -109,6 +127,8 @@ def temporary_twilio_media(
                     raise MediaError(
                         "MEDIA_CLEANUP_FAILED",
                         "Temporary media could not be removed from local disk.",
+                        stage="media_cleanup",
+                        diagnostic=_safe_exception_detail(error),
                     ) from error
         finally:
             if own_client:
@@ -130,6 +150,8 @@ def _download_one(
                 raise MediaError(
                     "MEDIA_DOWNLOAD_FAILED",
                     "Twilio media redirects are not accepted.",
+                    stage="media_download",
+                    diagnostic=f"Twilio media returned redirect status={response.status_code}.",
                 )
             response.raise_for_status()
             content_type = _normalized_content_type(response.headers.get("content-type"))
@@ -137,6 +159,11 @@ def _download_one(
                 raise MediaError(
                     "MEDIA_TYPE_NOT_ALLOWED",
                     "Only JPEG, PNG, and WebP images are accepted.",
+                    stage="media_validation",
+                    diagnostic=(
+                        "Twilio media returned disallowed Content-Type "
+                        f"{content_type or '<missing>'}."
+                    ),
                 )
 
             declared_length = _content_length(response.headers.get("content-length"))
@@ -145,6 +172,11 @@ def _download_one(
                 raise MediaError(
                     "MEDIA_TOO_LARGE",
                     "Downloaded media exceeds the configured size limit.",
+                    stage="media_validation",
+                    diagnostic=(
+                        f"Declared media length {declared_length} exceeds "
+                        f"remaining limit {effective_limit}."
+                    ),
                 )
 
             destination = destination_directory / (
@@ -158,6 +190,11 @@ def _download_one(
                         raise MediaError(
                             "MEDIA_TOO_LARGE",
                             "Downloaded media exceeds the configured size limit.",
+                            stage="media_validation",
+                            diagnostic=(
+                                f"Streamed media exceeded remaining limit "
+                                f"{effective_limit}."
+                            ),
                         )
                     media_file.write(chunk)
     except MediaError:
@@ -166,14 +203,22 @@ def _download_one(
         raise MediaError(
             "MEDIA_DOWNLOAD_FAILED",
             "Twilio media could not be downloaded securely.",
+            stage=("media_storage" if isinstance(error, OSError) else "media_download"),
+            diagnostic=_safe_exception_detail(error),
         ) from error
 
     if size_bytes == 0:
-        raise MediaError("MEDIA_DOWNLOAD_FAILED", "Twilio media was empty.")
+        raise MediaError(
+            "MEDIA_DOWNLOAD_FAILED",
+            "Twilio media was empty.",
+            stage="media_validation",
+        )
     if not _matches_image_signature(destination, content_type):
         raise MediaError(
             "MEDIA_TYPE_NOT_ALLOWED",
             "Downloaded media bytes do not match the declared image type.",
+            stage="media_validation",
+            diagnostic=f"File signature did not match Content-Type {content_type}.",
         )
     return DownloadedMedia(
         source_url=media_url,
@@ -189,6 +234,7 @@ def _required_secret(name: str) -> str:
         raise MediaError(
             "MEDIA_CONFIG_ERROR",
             f"Required local media credential is missing: {name}.",
+            stage="media_configuration",
         )
     return value
 
@@ -202,7 +248,12 @@ def _validate_twilio_media_url(
         parsed = urlsplit(media_url)
         port = parsed.port
     except (TypeError, ValueError) as error:
-        raise MediaError("INVALID_MEDIA_URL", "Twilio media URL is invalid.") from error
+        raise MediaError(
+            "INVALID_MEDIA_URL",
+            "Twilio media URL is invalid.",
+            stage="media_url_validation",
+            diagnostic=_safe_exception_detail(error),
+        ) from error
     path_match = TWILIO_MEDIA_PATH.fullmatch(parsed.path)
     if (
         parsed.scheme.lower() != "https"
@@ -218,6 +269,13 @@ def _validate_twilio_media_url(
         raise MediaError(
             "INVALID_MEDIA_URL",
             "Media URL must be an HTTPS Twilio API media resource.",
+            stage="media_url_validation",
+            diagnostic=(
+                "Media URL account does not match configured Twilio Account SID."
+                if path_match is not None
+                and path_match.group("account") != expected_account_sid
+                else "Media URL did not match the required Twilio media-resource form."
+            ),
         )
 
 
@@ -234,11 +292,15 @@ def _content_length(raw_value: str | None) -> int | None:
         raise MediaError(
             "MEDIA_DOWNLOAD_FAILED",
             "Twilio media returned an invalid Content-Length header.",
+            stage="media_validation",
+            diagnostic="Content-Length was not an integer.",
         ) from error
     if value < 0:
         raise MediaError(
             "MEDIA_DOWNLOAD_FAILED",
             "Twilio media returned an invalid Content-Length header.",
+            stage="media_validation",
+            diagnostic="Content-Length was negative.",
         )
     return value
 
@@ -253,3 +315,9 @@ def _matches_image_signature(path: Path, content_type: str) -> bool:
     if content_type == "image/webp":
         return len(header) >= 12 and header[:4] == b"RIFF" and header[8:12] == b"WEBP"
     return False
+
+
+def _safe_exception_detail(error: BaseException) -> str:
+    detail = str(error).replace("\r", " ").replace("\n", " ")
+    detail = re.sub(r"https?://\S+", "<redacted-url>", detail)
+    return f"{type(error).__name__}: {detail[:500]}"

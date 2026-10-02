@@ -110,6 +110,36 @@ Twilio reference:
 
 - https://www.twilio.com/docs/messaging/api/media-resource
 
+## Failure diagnostics
+
+Handled inference and media failures emit an `inference_error` JSON event before
+FastAPI returns 502/503. The event includes the request ID, endpoint, HTTP
+status, safe error code/message, root exception type, and pipeline stage:
+
+```text
+media_configuration
+media_url_validation
+media_download
+media_storage
+media_validation
+media_cleanup
+image_encode
+ollama_configuration
+ollama_call
+response_validation
+```
+
+The diagnostic event never includes bearer/Twilio credentials, captions, owner
+IDs, media URLs, or image bytes. HTTP exception details redact URLs. Use the
+request ID to pair it with the normal `http_request` completion event.
+
+Reproduce a fast handled media failure and print both the structured error log
+and HTTP response:
+
+```shell
+PYTHONPATH=local-api python3 local-api/scripts/run_error_logging_regression.py
+```
+
 ## Output adaptation
 
 The model produces the complete schema-version 1.0 AI contract:

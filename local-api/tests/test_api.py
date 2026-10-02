@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.inference import InferenceError
 from app.main import app
+from app.media import MediaError
 
 
 TOKEN = "stage2-test-token"
@@ -296,6 +297,61 @@ class Stage6ApiTests(unittest.TestCase):
                 }
             },
         )
+
+    def test_fast_media_failure_logs_stage_code_type_and_safe_detail(self) -> None:
+        media_url = (
+            "https://api.twilio.com/2010-04-01/Accounts/"
+            "AC00000000000000000000000000000000/"
+            "Messages/MM11111111111111111111111111111111/"
+            "Media/ME22222222222222222222222222222222"
+        )
+        failure = MediaError(
+            "MEDIA_TYPE_NOT_ALLOWED",
+            "Only JPEG, PNG, and WebP images are accepted.",
+            stage="media_validation",
+            diagnostic=(
+                "Twilio media returned disallowed Content-Type "
+                "application/octet-stream."
+            ),
+        )
+        with self.assertLogs("nrm.api", level="ERROR") as captured, patch(
+            "app.inference.temporary_twilio_media",
+            side_effect=failure,
+        ):
+            response = self.client.post(
+                "/process-interaction",
+                headers={**AUTH, "x-request-id": "request-fast-media-failure"},
+                json={
+                    "owner_id": "own_media_failure",
+                    "review_id": "review_media_failure",
+                    "raw_body": "private caption must not be logged",
+                    "media_refs": [media_url],
+                },
+            )
+
+        self.assertEqual(response.status_code, 502)
+        event = json.loads(captured.records[0].getMessage())
+        self.assertEqual(
+            event,
+            {
+                "diagnostic": (
+                    "Twilio media returned disallowed Content-Type "
+                    "application/octet-stream."
+                ),
+                "error_code": "MEDIA_TYPE_NOT_ALLOWED",
+                "event": "inference_error",
+                "exception_type": "MediaError",
+                "message": "Only JPEG, PNG, and WebP images are accepted.",
+                "path": "/process-interaction",
+                "request_id": "request-fast-media-failure",
+                "stage": "media_validation",
+                "status_code": 502,
+            },
+        )
+        rendered = captured.records[0].getMessage()
+        self.assertNotIn("stage2-test-token", rendered)
+        self.assertNotIn("private caption", rendered)
+        self.assertNotIn(media_url, rendered)
 
     def test_structured_logging_contains_metadata_not_secrets_or_body(self) -> None:
         with self.assertLogs("nrm.api", level="INFO") as captured:

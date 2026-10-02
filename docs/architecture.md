@@ -103,6 +103,11 @@ failure; local retention is not configurable. Vision outputs use the same
 schema-version 1.0 contract as text outputs, and captions are higher-priority
 semantic evidence than conflicting image text.
 
+Handled local inference failures are logged as structured `inference_error`
+events before the HTTP error response is returned. The event identifies the
+request ID, safe error code, exception type, and pipeline stage without logging
+credentials, owner IDs, captions, media URLs, or image bytes.
+
 ### Local LLM/VLM
 
 - Extracts evidence into strict structured drafts.

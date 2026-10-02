@@ -75,10 +75,19 @@ SUBSTANTIVE_SUMMARY_CUES = re.compile(
 class InferenceError(RuntimeError):
     """A safe, categorized failure suitable for an API error response."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        stage: str = "inference",
+        diagnostic: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
+        self.stage = stage
+        self.diagnostic = diagnostic or message
 
 
 SYSTEM_CONTRACT = """
@@ -244,10 +253,18 @@ def _process_media_interaction(
             client=media_client,
             temp_root=media_temp_root,
         ) as downloaded:
-            encoded_images = [
-                base64.b64encode(item.path.read_bytes()).decode("ascii")
-                for item in downloaded
-            ]
+            try:
+                encoded_images = [
+                    base64.b64encode(item.path.read_bytes()).decode("ascii")
+                    for item in downloaded
+                ]
+            except OSError as error:
+                raise InferenceError(
+                    "MEDIA_PROCESSING_FAILED",
+                    "Downloaded media could not be prepared for vision inference.",
+                    stage="image_encode",
+                    diagnostic=f"{type(error).__name__}: {str(error)[:500]}",
+                ) from error
             caption = request.raw_body.strip()
             user_content = (
                 "User caption/instruction (higher priority than image evidence):\n"
@@ -282,7 +299,12 @@ def _process_media_interaction(
                 chat=chat or _ollama_vision_chat,
             )
     except MediaError as error:
-        raise InferenceError(error.code, error.message) from error
+        raise InferenceError(
+            error.code,
+            error.message,
+            stage=error.stage,
+            diagnostic=error.diagnostic,
+        ) from error
 
     return _draft_from_output(
         output,
@@ -423,6 +445,7 @@ def _validate_revision_patch_scope(
         raise InferenceError(
             "AI_SCHEMA_ERROR",
             "Revision patch violates correction scope: " + "; ".join(violations),
+            stage="response_validation",
         )
 
 
@@ -437,6 +460,7 @@ def _parse_and_validate(
         raise InferenceError(
             "AI_INVALID_JSON",
             f"Model output is not valid JSON: {detail}",
+            stage="response_validation",
         ) from error
 
     try:
@@ -453,6 +477,7 @@ def _parse_and_validate(
         raise InferenceError(
             "AI_SCHEMA_ERROR",
             json.dumps(concise_errors, separators=(",", ":")),
+            stage="response_validation",
         ) from error
 
 
@@ -498,10 +523,19 @@ def _ollama_request(
         ) as client:
             response = client.post(f"{base_url}/api/chat", json=payload)
             response.raise_for_status()
-    except (httpx.RequestError, httpx.HTTPStatusError) as error:
+    except httpx.HTTPStatusError as error:
         raise InferenceError(
             "LOCAL_API_UNAVAILABLE",
             "The local Ollama service is unavailable or rejected the request.",
+            stage="ollama_call",
+            diagnostic=_ollama_http_error_diagnostic(error.response),
+        ) from error
+    except httpx.RequestError as error:
+        raise InferenceError(
+            "LOCAL_API_UNAVAILABLE",
+            "The local Ollama service is unavailable or rejected the request.",
+            stage="ollama_call",
+            diagnostic=f"{type(error).__name__}: {_redact_urls(str(error))[:500]}",
         ) from error
 
     try:
@@ -511,9 +545,15 @@ def _ollama_request(
         raise InferenceError(
             "AI_INVALID_JSON",
             "Ollama returned an invalid chat response envelope.",
+            stage="response_validation",
+            diagnostic=f"{type(error).__name__}: {str(error)[:500]}",
         ) from error
     if not isinstance(content, str) or not content.strip():
-        raise InferenceError("AI_INVALID_JSON", "Ollama returned empty model output.")
+        raise InferenceError(
+            "AI_INVALID_JSON",
+            "Ollama returned empty model output.",
+            stage="response_validation",
+        )
     return content
 
 
@@ -528,11 +568,13 @@ def _ollama_timeout_seconds() -> float:
         raise InferenceError(
             "LOCAL_API_UNAVAILABLE",
             f"{OLLAMA_TIMEOUT_ENV} must be a positive number.",
+            stage="ollama_configuration",
         ) from error
     if value <= 0:
         raise InferenceError(
             "LOCAL_API_UNAVAILABLE",
             f"{OLLAMA_TIMEOUT_ENV} must be a positive number.",
+            stage="ollama_configuration",
         )
     return value
 
@@ -636,4 +678,24 @@ def _output_from_draft(draft: InteractionDraft) -> AIOutputContract:
         ),
         identity=identity,
         warnings=warnings,
+    )
+
+
+def _ollama_http_error_diagnostic(response: httpx.Response) -> str:
+    detail = ""
+    try:
+        payload = response.json()
+        if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+            detail = payload["error"]
+    except ValueError:
+        detail = ""
+    suffix = f"; error={_redact_urls(detail)[:500]}" if detail else ""
+    return f"Ollama HTTP status={response.status_code}{suffix}"
+
+
+def _redact_urls(value: str) -> str:
+    return (
+        re.sub(r"https?://\S+", "<redacted-url>", value)
+        .replace("\r", " ")
+        .replace("\n", " ")
     )

@@ -28,6 +28,7 @@ app = FastAPI(
 @app.middleware("http")
 async def structured_request_log(request: Request, call_next):
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = request_id
     started = time.perf_counter()
     response = await call_next(request)
     duration_ms = round((time.perf_counter() - started) * 1000, 3)
