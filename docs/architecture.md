@@ -96,8 +96,11 @@ Stage 7 routes requests with no `media_refs` through the existing
 `qwen2.5vl:3b`. Media-bearing requests are downloaded from exact Twilio media
 resource URLs with local HTTP Basic credentials. The downloader accepts at most
 four JPEG/PNG/WebP images, enforces 5 MiB per-file and 10 MiB aggregate limits,
-checks both HTTP type and file signature, rejects redirects, and sends
-credentials only to the configured account's `api.twilio.com` resource path.
+checks both HTTP type and file signature, and sends credentials only to the
+configured account's `api.twilio.com` resource path. It permits one HTTPS
+redirect to Twilio's documented `mms.twiliocdn.com` or
+`s3-external-1.amazonaws.com` media hosts using a newly built request with no
+Authorization header; other targets and additional redirects are rejected.
 Each request uses a scoped temporary directory that is removed after success or
 failure; local retention is not configurable. Vision outputs use the same
 schema-version 1.0 contract as text outputs, and captions are higher-priority

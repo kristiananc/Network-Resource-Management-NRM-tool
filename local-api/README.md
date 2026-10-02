@@ -86,8 +86,18 @@ NRM_TWILIO_AUTH_TOKEN=<Twilio Auth Token>
 
 These values belong only in `scripts/windows/local-api.env`, which is ignored
 by Git. The downloader uses HTTP Basic authentication, sends credentials only
-to HTTPS `api.twilio.com` media-resource URLs, rejects redirects, and never logs
-the URL or credentials. Missing credentials return `MEDIA_CONFIG_ERROR`.
+to HTTPS `api.twilio.com` media-resource URLs, and never logs the URL or
+credentials. Missing credentials return `MEDIA_CONFIG_ERROR`.
+
+Twilio may answer that authenticated request with one redirect to a short-lived
+media URL. The downloader permits exactly one hop to either
+`mms.twiliocdn.com` (secured media) or `s3-external-1.amazonaws.com` (Twilio's
+legacy media host), requires HTTPS/default port/no embedded credentials, and
+allows the signed query string. It creates a new unauthenticated HTTP request
+for that hop, so the Twilio Basic Authorization header is never forwarded.
+Any other host, insecure URL, or second redirect is rejected before another
+request is made. The exact host allowlist follows Twilio's documented media
+domains rather than broadly trusting arbitrary CloudFront or Amazon hosts.
 
 The bounds for new untrusted media input are deliberately narrower than a
 general file-upload service:
@@ -109,6 +119,7 @@ draft; no downloaded image is retained on local disk.
 Twilio reference:
 
 - https://www.twilio.com/docs/messaging/api/media-resource
+- https://help.twilio.com/articles/223183748
 
 ## Failure diagnostics
 

@@ -24,7 +24,12 @@ MEDIA_URL = (
     "Messages/MM11111111111111111111111111111111/"
     "Media/ME22222222222222222222222222222222"
 )
+SIGNED_CDN_URL = (
+    "https://mms.twiliocdn.com/secure-media/test-image.jpg"
+    "?Expires=1234567890&Signature=synthetic"
+)
 PNG_BYTES = b"\x89PNG\r\n\x1a\nsynthetic-stage7-image"
+JPEG_BYTES = b"\xff\xd8\xffsynthetic-stage7-image"
 MEDIA_ENV = {
     "NRM_TWILIO_ACCOUNT_SID": "AC00000000000000000000000000000000",
     "NRM_TWILIO_AUTH_TOKEN": "local-test-auth-token",
@@ -32,6 +37,112 @@ MEDIA_ENV = {
 
 
 class Stage7MediaTests(unittest.TestCase):
+    def test_one_redirect_downloads_without_forwarding_authorization(self) -> None:
+        requests: list[httpx.Request] = []
+        expected_auth = "Basic " + base64.b64encode(
+            b"AC00000000000000000000000000000000:local-test-auth-token"
+        ).decode("ascii")
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                self.assertEqual(str(request.url), MEDIA_URL)
+                self.assertEqual(request.headers["authorization"], expected_auth)
+                return httpx.Response(307, headers={"location": SIGNED_CDN_URL})
+            self.assertEqual(str(request.url), SIGNED_CDN_URL)
+            self.assertNotIn("authorization", request.headers)
+            return httpx.Response(
+                200,
+                headers={"content-type": "image/jpeg"},
+                content=JPEG_BYTES,
+            )
+
+        client = httpx.Client(
+            transport=httpx.MockTransport(handler),
+            follow_redirects=False,
+        )
+        with tempfile.TemporaryDirectory() as root_name, patch.dict(
+            os.environ, MEDIA_ENV, clear=False
+        ):
+            root = Path(root_name)
+            with temporary_twilio_media(
+                [MEDIA_URL], client=client, temp_root=root
+            ) as downloaded:
+                self.assertEqual(downloaded[0].path.read_bytes(), JPEG_BYTES)
+            self.assertEqual(list(root.iterdir()), [])
+
+        self.assertEqual(len(requests), 2)
+        self.assertIn("authorization", requests[0].headers)
+        self.assertNotIn("authorization", requests[1].headers)
+        client.close()
+
+    def test_unsafe_redirect_targets_are_rejected_before_second_request(self) -> None:
+        unsafe_targets = (
+            "http://mms.twiliocdn.com/secure-media/test-image.jpg",
+            "https://example.com/secure-media/test-image.jpg",
+        )
+        for target in unsafe_targets:
+            with self.subTest(target=target):
+                requests: list[httpx.Request] = []
+
+                def handler(request: httpx.Request) -> httpx.Response:
+                    requests.append(request)
+                    if len(requests) > 1:
+                        self.fail("unsafe redirect target must not be requested")
+                    return httpx.Response(307, headers={"location": target})
+
+                client = httpx.Client(transport=httpx.MockTransport(handler))
+                with tempfile.TemporaryDirectory() as root_name, patch.dict(
+                    os.environ, MEDIA_ENV, clear=False
+                ):
+                    root = Path(root_name)
+                    with self.assertRaises(MediaError) as captured:
+                        with temporary_twilio_media(
+                            [MEDIA_URL], client=client, temp_root=root
+                        ):
+                            self.fail("unsafe redirect must not yield media")
+                    self.assertEqual(captured.exception.code, "MEDIA_DOWNLOAD_FAILED")
+                    self.assertIn("not allowed", captured.exception.message)
+                    self.assertEqual(len(requests), 1)
+                    self.assertEqual(list(root.iterdir()), [])
+                client.close()
+
+    def test_second_redirect_is_rejected_without_requesting_third_hop(self) -> None:
+        requests: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            requests.append(request)
+            if len(requests) == 1:
+                return httpx.Response(307, headers={"location": SIGNED_CDN_URL})
+            if len(requests) == 2:
+                self.assertNotIn("authorization", request.headers)
+                return httpx.Response(
+                    307,
+                    headers={
+                        "location": (
+                            "https://s3-external-1.amazonaws.com/"
+                            "another-signed-media-object"
+                        )
+                    },
+                )
+            self.fail("a third request must never be sent")
+
+        client = httpx.Client(transport=httpx.MockTransport(handler))
+        with tempfile.TemporaryDirectory() as root_name, patch.dict(
+            os.environ, MEDIA_ENV, clear=False
+        ):
+            root = Path(root_name)
+            with self.assertRaises(MediaError) as captured:
+                with temporary_twilio_media(
+                    [MEDIA_URL], client=client, temp_root=root
+                ):
+                    self.fail("second redirect must not yield media")
+            self.assertEqual(captured.exception.code, "MEDIA_DOWNLOAD_FAILED")
+            self.assertIn("redirect limit", captured.exception.message)
+            self.assertEqual(len(requests), 2)
+            self.assertEqual(list(root.iterdir()), [])
+        client.close()
+
     def test_production_shape_twilio_media_url_passes_validation(self) -> None:
         media_url = (
             "https://api.twilio.com/2010-04-01/Accounts/"

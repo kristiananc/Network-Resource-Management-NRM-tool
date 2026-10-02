@@ -28,6 +28,12 @@ ALLOWED_MEDIA_TYPES = {
     "image/png": ".png",
     "image/webp": ".webp",
 }
+ALLOWED_TWILIO_MEDIA_REDIRECT_HOSTS = frozenset(
+    {
+        "mms.twiliocdn.com",
+        "s3-external-1.amazonaws.com",
+    }
+)
 TWILIO_MEDIA_PATH = re.compile(
     r"^/2010-04-01/Accounts/(?P<account>AC[0-9a-fA-F]{32})/"
     r"Messages/(?:SM|MM)[0-9a-fA-F]{32}/Media/ME[0-9a-fA-F]{32}$"
@@ -145,58 +151,52 @@ def _download_one(
     remaining_total_bytes: int,
 ) -> DownloadedMedia:
     try:
-        with client.stream("GET", media_url, auth=auth) as response:
+        with client.stream(
+            "GET",
+            media_url,
+            auth=auth,
+            follow_redirects=False,
+        ) as response:
+            if response.is_redirect:
+                redirect_url = _validated_twilio_media_redirect(
+                    response.headers.get("location"),
+                    status_code=response.status_code,
+                )
+            else:
+                return _save_media_response(
+                    response,
+                    source_url=media_url,
+                    destination_directory=destination_directory,
+                    index=index,
+                    remaining_total_bytes=remaining_total_bytes,
+                )
+
+        # Build a fresh request rather than reusing HTTPX's redirect request. This
+        # prevents the Twilio Basic Auth header from reaching the signed CDN URL.
+        redirect_request = httpx.Request("GET", redirect_url)
+        response = client.send(
+            redirect_request,
+            stream=True,
+            auth=None,
+            follow_redirects=False,
+        )
+        try:
             if response.is_redirect:
                 raise MediaError(
                     "MEDIA_DOWNLOAD_FAILED",
-                    "Twilio media redirects are not accepted.",
+                    "Twilio media exceeded the allowed redirect limit.",
                     stage="media_download",
-                    diagnostic=f"Twilio media returned redirect status={response.status_code}.",
+                    diagnostic="Twilio media returned more than one redirect hop.",
                 )
-            response.raise_for_status()
-            content_type = _normalized_content_type(response.headers.get("content-type"))
-            if content_type not in ALLOWED_MEDIA_TYPES:
-                raise MediaError(
-                    "MEDIA_TYPE_NOT_ALLOWED",
-                    "Only JPEG, PNG, and WebP images are accepted.",
-                    stage="media_validation",
-                    diagnostic=(
-                        "Twilio media returned disallowed Content-Type "
-                        f"{content_type or '<missing>'}."
-                    ),
-                )
-
-            declared_length = _content_length(response.headers.get("content-length"))
-            effective_limit = min(MAX_MEDIA_BYTES, remaining_total_bytes)
-            if declared_length is not None and declared_length > effective_limit:
-                raise MediaError(
-                    "MEDIA_TOO_LARGE",
-                    "Downloaded media exceeds the configured size limit.",
-                    stage="media_validation",
-                    diagnostic=(
-                        f"Declared media length {declared_length} exceeds "
-                        f"remaining limit {effective_limit}."
-                    ),
-                )
-
-            destination = destination_directory / (
-                f"media-{index}{ALLOWED_MEDIA_TYPES[content_type]}"
+            return _save_media_response(
+                response,
+                source_url=media_url,
+                destination_directory=destination_directory,
+                index=index,
+                remaining_total_bytes=remaining_total_bytes,
             )
-            size_bytes = 0
-            with destination.open("xb") as media_file:
-                for chunk in response.iter_bytes():
-                    size_bytes += len(chunk)
-                    if size_bytes > effective_limit:
-                        raise MediaError(
-                            "MEDIA_TOO_LARGE",
-                            "Downloaded media exceeds the configured size limit.",
-                            stage="media_validation",
-                            diagnostic=(
-                                f"Streamed media exceeded remaining limit "
-                                f"{effective_limit}."
-                            ),
-                        )
-                    media_file.write(chunk)
+        finally:
+            response.close()
     except MediaError:
         raise
     except (httpx.RequestError, httpx.HTTPStatusError, OSError) as error:
@@ -206,6 +206,60 @@ def _download_one(
             stage=("media_storage" if isinstance(error, OSError) else "media_download"),
             diagnostic=_safe_exception_detail(error),
         ) from error
+
+
+def _save_media_response(
+    response: httpx.Response,
+    *,
+    source_url: str,
+    destination_directory: Path,
+    index: int,
+    remaining_total_bytes: int,
+) -> DownloadedMedia:
+    response.raise_for_status()
+    content_type = _normalized_content_type(response.headers.get("content-type"))
+    if content_type not in ALLOWED_MEDIA_TYPES:
+        raise MediaError(
+            "MEDIA_TYPE_NOT_ALLOWED",
+            "Only JPEG, PNG, and WebP images are accepted.",
+            stage="media_validation",
+            diagnostic=(
+                "Twilio media returned disallowed Content-Type "
+                f"{content_type or '<missing>'}."
+            ),
+        )
+
+    declared_length = _content_length(response.headers.get("content-length"))
+    effective_limit = min(MAX_MEDIA_BYTES, remaining_total_bytes)
+    if declared_length is not None and declared_length > effective_limit:
+        raise MediaError(
+            "MEDIA_TOO_LARGE",
+            "Downloaded media exceeds the configured size limit.",
+            stage="media_validation",
+            diagnostic=(
+                f"Declared media length {declared_length} exceeds "
+                f"remaining limit {effective_limit}."
+            ),
+        )
+
+    destination = destination_directory / (
+        f"media-{index}{ALLOWED_MEDIA_TYPES[content_type]}"
+    )
+    size_bytes = 0
+    with destination.open("xb") as media_file:
+        for chunk in response.iter_bytes():
+            size_bytes += len(chunk)
+            if size_bytes > effective_limit:
+                raise MediaError(
+                    "MEDIA_TOO_LARGE",
+                    "Downloaded media exceeds the configured size limit.",
+                    stage="media_validation",
+                    diagnostic=(
+                        f"Streamed media exceeded remaining limit "
+                        f"{effective_limit}."
+                    ),
+                )
+            media_file.write(chunk)
 
     if size_bytes == 0:
         raise MediaError(
@@ -221,11 +275,58 @@ def _download_one(
             diagnostic=f"File signature did not match Content-Type {content_type}.",
         )
     return DownloadedMedia(
-        source_url=media_url,
+        source_url=source_url,
         content_type=content_type,
         path=destination,
         size_bytes=size_bytes,
     )
+
+
+def _validated_twilio_media_redirect(
+    location: str | None,
+    *,
+    status_code: int,
+) -> str:
+    if not location:
+        raise MediaError(
+            "MEDIA_DOWNLOAD_FAILED",
+            "Twilio media redirect did not include a destination.",
+            stage="media_download",
+            diagnostic=(
+                f"Twilio media returned redirect status={status_code} without Location."
+            ),
+        )
+    try:
+        parsed = urlsplit(location)
+        port = parsed.port
+    except (TypeError, ValueError) as error:
+        raise MediaError(
+            "MEDIA_DOWNLOAD_FAILED",
+            "Twilio media redirect destination is invalid.",
+            stage="media_download",
+            diagnostic=_safe_exception_detail(error),
+        ) from error
+
+    hostname = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme.lower() != "https"
+        or hostname not in ALLOWED_TWILIO_MEDIA_REDIRECT_HOSTS
+        or port not in (None, 443)
+        or parsed.username is not None
+        or parsed.password is not None
+        or not parsed.path
+        or parsed.fragment
+    ):
+        raise MediaError(
+            "MEDIA_DOWNLOAD_FAILED",
+            "Twilio media redirect destination is not allowed.",
+            stage="media_download",
+            diagnostic=(
+                "Redirect target failed the HTTPS and approved Twilio media CDN "
+                "host checks."
+            ),
+        )
+    return location
 
 
 def _required_secret(name: str) -> str:
