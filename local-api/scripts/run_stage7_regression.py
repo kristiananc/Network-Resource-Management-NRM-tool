@@ -8,11 +8,13 @@ import os
 import sys
 import tempfile
 from datetime import date
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import httpx
+from PIL import Image, ImageDraw
 
 from app.inference import InferenceError, process_interaction
 from app.models import ProcessInteractionRequest
@@ -23,12 +25,23 @@ MEDIA_URL = (
     "Messages/MM11111111111111111111111111111111/"
     "Media/ME22222222222222222222222222222222"
 )
-PNG_BYTES = b"\x89PNG\r\n\x1a\nBUSINESS_CARD_NAME=Sarah Chen; ORG=NAVWAR"
 MEDIA_ENV = {
     "NRM_TWILIO_ACCOUNT_SID": "AC00000000000000000000000000000000",
     "NRM_TWILIO_AUTH_TOKEN": "local-test-auth-token",
     "NRM_OLLAMA_VISION_MODEL": "qwen2.5vl:3b",
 }
+
+
+def synthetic_png() -> bytes:
+    image = Image.new("RGB", (640, 480), "white")
+    drawing = ImageDraw.Draw(image)
+    drawing.text((24, 24), "BUSINESS CARD Sarah Chen NAVWAR", fill="black")
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
+PNG_BYTES = synthetic_png()
 
 
 def mock_client(*, oversized: bool = False) -> httpx.Client:

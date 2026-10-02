@@ -1,6 +1,7 @@
 """Unit tests for Stage 6 prompt isolation, validation, repair, and outages."""
 
 import json
+import os
 import unittest
 from datetime import date
 from unittest.mock import patch
@@ -10,6 +11,7 @@ import httpx
 from app.inference import (
     InferenceError,
     _ollama_chat,
+    _ollama_vision_num_ctx,
     process_interaction,
     revise_draft,
 )
@@ -42,6 +44,28 @@ def valid_output(**overrides):
 
 
 class Stage6InferenceTests(unittest.TestCase):
+    def test_vision_context_default_override_and_maximum_are_enforced(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(_ollama_vision_num_ctx(), 8192)
+        with patch.dict(
+            os.environ,
+            {"NRM_OLLAMA_VISION_NUM_CTX": "12288"},
+            clear=False,
+        ):
+            self.assertEqual(_ollama_vision_num_ctx(), 12288)
+        for invalid_value in ("4095", "32769", "not-an-integer"):
+            with self.subTest(invalid_value=invalid_value), patch.dict(
+                os.environ,
+                {"NRM_OLLAMA_VISION_NUM_CTX": invalid_value},
+                clear=False,
+            ):
+                with self.assertRaises(InferenceError) as captured:
+                    _ollama_vision_num_ctx()
+                self.assertEqual(
+                    captured.exception.stage,
+                    "ollama_configuration",
+                )
+
     def test_prompt_hierarchy_excludes_owner_metadata(self) -> None:
         captured = {}
 

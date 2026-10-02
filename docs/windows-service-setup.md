@@ -83,11 +83,14 @@ NRM_PYTHON_EXE=local-api\.venv\Scripts\python.exe
 NRM_TWILIO_ACCOUNT_SID=<the Twilio Account SID>
 NRM_TWILIO_AUTH_TOKEN=<the Twilio Auth Token>
 NRM_OLLAMA_VISION_MODEL=qwen2.5vl:3b
+NRM_OLLAMA_VISION_NUM_CTX=8192
 ```
 
 Do not generate a different bearer token unless Apps Script is updated to the
-same value. `NRM_OLLAMA_TEXT_MODEL`, `NRM_OLLAMA_VISION_MODEL`, and
-`NRM_OLLAMA_TIMEOUT_SECONDS` may remain at their template defaults. The Twilio
+same value. `NRM_OLLAMA_TEXT_MODEL`, `NRM_OLLAMA_VISION_MODEL`,
+`NRM_OLLAMA_VISION_NUM_CTX`, and `NRM_OLLAMA_TIMEOUT_SECONDS` may remain at
+their template defaults. The vision context defaults to 8,192 tokens and must
+remain between 4,096 and 32,768 for the configured Qwen model. The Twilio
 values are local copies needed for authenticated media downloads; never copy
 them into a tracked file.
 

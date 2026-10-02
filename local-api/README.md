@@ -27,6 +27,7 @@ Optional local overrides:
 NRM_OLLAMA_BASE_URL=http://192.168.0.200:11434
 NRM_OLLAMA_TEXT_MODEL=llama3.1:8b
 NRM_OLLAMA_VISION_MODEL=qwen2.5vl:3b
+NRM_OLLAMA_VISION_NUM_CTX=8192
 NRM_OLLAMA_TIMEOUT_SECONDS=120
 ```
 
@@ -69,10 +70,26 @@ schema used by text extraction. Vision output therefore has the same
 `person`, `interaction`, `identity`, and `warnings` structure and requires no
 downstream Apps Script or Sheets change.
 
+Vision requests explicitly send `options.num_ctx`. The default is `8192`, and
+`NRM_OLLAMA_VISION_NUM_CTX` may override it from `4096` through `32768`.
+Qwen's model card describes the current model configuration as supporting
+32,768 tokens; 8,192 doubles Ollama's observed 4,096 default while avoiding the
+CPU/RAM cost of allocating the model maximum.
+
+Before base64 encoding, Pillow applies EXIF orientation, flattens transparency
+onto white, resizes with Lanczos, and re-encodes every input as RGB JPEG quality
+85 with 4:4:4 chroma. The long edge is capped at 1,280 pixels and total area at
+`1280 * 28 * 28` pixels (about one megapixel). The area bound follows Qwen's
+recommended approximately 1,280-visual-token budget. The edge cap retains more
+detail than the commonly recommended 1024x768 OCR input while avoiding the
+extra visual tokens and CPU time of full-resolution phone photos.
+
 Official references:
 
 - https://ollama.com/library/qwen2.5vl:3b
 - https://ollama.com/blog/structured-outputs
+- https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
+- https://docs.cloud.google.com/vision/docs/supported-files
 
 ## Secure Twilio media downloads
 
@@ -134,7 +151,7 @@ media_download
 media_storage
 media_validation
 media_cleanup
-image_encode
+image_preprocess
 ollama_configuration
 ollama_call
 response_validation

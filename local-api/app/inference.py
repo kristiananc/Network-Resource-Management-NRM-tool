@@ -25,18 +25,23 @@ from .models import (
     RevisionPatch,
     ReviseDraftRequest,
 )
+from .vision import VisionImageError, prepare_vision_image
 
 
 DEFAULT_OLLAMA_BASE_URL = "http://192.168.0.200:11434"
 DEFAULT_OLLAMA_MODEL = "llama3.1:8b"
 DEFAULT_OLLAMA_VISION_MODEL = "qwen2.5vl:3b"
 DEFAULT_OLLAMA_TIMEOUT_SECONDS = 120.0
+DEFAULT_OLLAMA_VISION_NUM_CTX = 8192
+MIN_OLLAMA_VISION_NUM_CTX = 4096
+MAX_OLLAMA_VISION_NUM_CTX = 32768
 SCHEMA_VERSION = "1.0"
 
 OLLAMA_BASE_URL_ENV = "NRM_OLLAMA_BASE_URL"
 OLLAMA_MODEL_ENV = "NRM_OLLAMA_TEXT_MODEL"
 OLLAMA_VISION_MODEL_ENV = "NRM_OLLAMA_VISION_MODEL"
 OLLAMA_TIMEOUT_ENV = "NRM_OLLAMA_TIMEOUT_SECONDS"
+OLLAMA_VISION_NUM_CTX_ENV = "NRM_OLLAMA_VISION_NUM_CTX"
 
 ALLOWED_PLATFORMS = [platform.value for platform in Platform]
 ChatFunction = Callable[[list[dict[str, Any]], dict[str, Any]], str]
@@ -255,14 +260,14 @@ def _process_media_interaction(
         ) as downloaded:
             try:
                 encoded_images = [
-                    base64.b64encode(item.path.read_bytes()).decode("ascii")
+                    base64.b64encode(prepare_vision_image(item.path)).decode("ascii")
                     for item in downloaded
                 ]
-            except OSError as error:
+            except (OSError, VisionImageError) as error:
                 raise InferenceError(
                     "MEDIA_PROCESSING_FAILED",
                     "Downloaded media could not be prepared for vision inference.",
-                    stage="image_encode",
+                    stage="image_preprocess",
                     diagnostic=f"{type(error).__name__}: {str(error)[:500]}",
                 ) from error
             caption = request.raw_body.strip()
@@ -499,6 +504,7 @@ def _ollama_vision_chat(
             OLLAMA_VISION_MODEL_ENV,
             DEFAULT_OLLAMA_VISION_MODEL,
         ),
+        num_ctx=_ollama_vision_num_ctx(),
     )
 
 
@@ -507,15 +513,19 @@ def _ollama_request(
     schema: dict[str, Any],
     *,
     model: str,
+    num_ctx: int | None = None,
 ) -> str:
     base_url = os.environ.get(OLLAMA_BASE_URL_ENV, DEFAULT_OLLAMA_BASE_URL).rstrip("/")
     timeout_seconds = _ollama_timeout_seconds()
+    options: dict[str, int | float] = {"temperature": 0}
+    if num_ctx is not None:
+        options["num_ctx"] = num_ctx
     payload = {
         "model": model,
         "messages": messages,
         "stream": False,
         "format": schema,
-        "options": {"temperature": 0},
+        "options": options,
     }
     try:
         with httpx.Client(
@@ -574,6 +584,34 @@ def _ollama_timeout_seconds() -> float:
         raise InferenceError(
             "LOCAL_API_UNAVAILABLE",
             f"{OLLAMA_TIMEOUT_ENV} must be a positive number.",
+            stage="ollama_configuration",
+        )
+    return value
+
+
+def _ollama_vision_num_ctx() -> int:
+    raw_value = os.environ.get(
+        OLLAMA_VISION_NUM_CTX_ENV,
+        str(DEFAULT_OLLAMA_VISION_NUM_CTX),
+    )
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise InferenceError(
+            "LOCAL_API_UNAVAILABLE",
+            (
+                f"{OLLAMA_VISION_NUM_CTX_ENV} must be an integer between "
+                f"{MIN_OLLAMA_VISION_NUM_CTX} and {MAX_OLLAMA_VISION_NUM_CTX}."
+            ),
+            stage="ollama_configuration",
+        ) from error
+    if value < MIN_OLLAMA_VISION_NUM_CTX or value > MAX_OLLAMA_VISION_NUM_CTX:
+        raise InferenceError(
+            "LOCAL_API_UNAVAILABLE",
+            (
+                f"{OLLAMA_VISION_NUM_CTX_ENV} must be an integer between "
+                f"{MIN_OLLAMA_VISION_NUM_CTX} and {MAX_OLLAMA_VISION_NUM_CTX}."
+            ),
             stage="ollama_configuration",
         )
     return value

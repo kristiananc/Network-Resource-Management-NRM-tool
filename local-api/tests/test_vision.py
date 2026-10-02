@@ -2,17 +2,21 @@
 
 import base64
 import json
+import math
 import os
 import tempfile
 import unittest
 from datetime import date
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+from PIL import Image, ImageDraw
 
 from app.inference import InferenceError, process_interaction
 from app.models import ProcessInteractionRequest
+from app.vision import VISION_MAX_LONG_EDGE, VISION_MAX_PIXELS, estimate_visual_tokens
 
 
 MEDIA_URL = (
@@ -21,20 +25,45 @@ MEDIA_URL = (
     "Media/ME22222222222222222222222222222222"
 )
 IMAGE_NAME = "Sarah Chen"
-PNG_BYTES = b"\x89PNG\r\n\x1a\nBUSINESS_CARD_NAME=" + IMAGE_NAME.encode("ascii")
 MEDIA_ENV = {
     "NRM_TWILIO_ACCOUNT_SID": "AC00000000000000000000000000000000",
     "NRM_TWILIO_AUTH_TOKEN": "local-test-auth-token",
     "NRM_OLLAMA_VISION_MODEL": "qwen2.5vl:3b",
+    "NRM_OLLAMA_VISION_NUM_CTX": "8192",
 }
 
 
-def media_client(content: bytes = PNG_BYTES) -> httpx.Client:
+def rendered_image_bytes(
+    label: str = "BUSINESS CARD Sarah Chen NAVWAR",
+    *,
+    size: tuple[int, int] = (640, 480),
+    image_format: str = "PNG",
+    quality: int = 95,
+) -> bytes:
+    image = Image.new("RGB", size, "white")
+    drawing = ImageDraw.Draw(image)
+    for y in range(20, size[1], 40):
+        drawing.line((0, y, size[0], y), fill=(220, 225, 230), width=2)
+    drawing.text((24, 24), label, fill="black")
+    output = BytesIO()
+    save_options = {"quality": quality} if image_format == "JPEG" else {}
+    image.save(output, format=image_format, **save_options)
+    return output.getvalue()
+
+
+PNG_BYTES = rendered_image_bytes()
+
+
+def media_client(
+    content: bytes = PNG_BYTES,
+    *,
+    content_type: str = "image/png",
+) -> httpx.Client:
     return httpx.Client(
         transport=httpx.MockTransport(
             lambda _request: httpx.Response(
                 200,
-                headers={"content-type": "image/png"},
+                headers={"content-type": content_type},
                 content=content,
             )
         )
@@ -124,7 +153,9 @@ class Stage7VisionTests(unittest.TestCase):
         def vision_chat(messages, _schema):
             self.assertIn("Sarah Chen from NAVWAR", messages[2]["content"])
             image_bytes = base64.b64decode(messages[2]["images"][0])
-            self.assertIn(IMAGE_NAME.encode("ascii"), image_bytes)
+            with Image.open(BytesIO(image_bytes)) as image:
+                self.assertEqual(image.format, "JPEG")
+                self.assertEqual(image.size, (640, 480))
             return output_json(
                 name="Sarah Chen",
                 organization="NAVWAR",
@@ -163,7 +194,8 @@ class Stage7VisionTests(unittest.TestCase):
             self.assertIn("higher priority than image evidence", messages[2]["content"])
             self.assertIn("Sara Chen, not Sarah Chen", messages[2]["content"])
             image_bytes = base64.b64decode(messages[2]["images"][0])
-            self.assertIn(b"BUSINESS_CARD_NAME=Sarah Chen", image_bytes)
+            with Image.open(BytesIO(image_bytes)) as image:
+                self.assertEqual(image.format, "JPEG")
             self.assertIn(
                 "caption or instruction is the authoritative semantic guide",
                 messages[0]["content"],
@@ -202,12 +234,13 @@ class Stage7VisionTests(unittest.TestCase):
 
     def test_event_screenshot_produces_supported_event_draft(self) -> None:
         client = media_client(
-            b"\x89PNG\r\n\x1a\nEVENT=Defense Tech Summit; DATE=2026-10-20"
+            rendered_image_bytes("EVENT Defense Tech Summit DATE 2026-10-20")
         )
 
         def vision_chat(messages, _schema):
             image_bytes = base64.b64decode(messages[2]["images"][0])
-            self.assertIn(b"Defense Tech Summit", image_bytes)
+            with Image.open(BytesIO(image_bytes)) as image:
+                self.assertEqual(image.format, "JPEG")
             return output_json(
                 name=None,
                 organization=None,
@@ -239,7 +272,7 @@ class Stage7VisionTests(unittest.TestCase):
         self.assertIn("Defense Tech Summit", draft.summary)
 
     def test_representative_photo_does_not_fabricate_identity(self) -> None:
-        client = media_client(b"\x89PNG\r\n\x1a\nPHOTO_WITH_NO_READABLE_TEXT")
+        client = media_client(rendered_image_bytes("PHOTO WITH NO READABLE TEXT"))
 
         def vision_chat(_messages, _schema):
             return output_json(
@@ -274,6 +307,93 @@ class Stage7VisionTests(unittest.TestCase):
         self.assertIsNone(draft.summary)
         self.assertEqual(draft.details_json["identity"]["confidence"], 0.0)
         self.assertTrue(draft.details_json["warnings"])
+
+    def test_large_image_is_bounded_and_vision_num_ctx_is_sent(self) -> None:
+        before_dimensions = (4032, 3024)
+        original_bytes = rendered_image_bytes(
+            "BUSINESS CARD OCR REGRESSION " * 8,
+            size=before_dimensions,
+            image_format="JPEG",
+            quality=95,
+        )
+        client = media_client(original_bytes, content_type="image/jpeg")
+        captured_payload: dict = {}
+
+        def ollama_handler(request: httpx.Request) -> httpx.Response:
+            captured_payload.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "message": {
+                        "content": output_json(
+                            name="Sarah Chen",
+                            organization="NAVWAR",
+                            summary=None,
+                            evidence=["business card image"],
+                            interaction_date=None,
+                            platform=None,
+                        )
+                    }
+                },
+            )
+
+        ollama_client = httpx.Client(transport=httpx.MockTransport(ollama_handler))
+        with tempfile.TemporaryDirectory() as root_name, patch.dict(
+            os.environ, MEDIA_ENV, clear=False
+        ), patch("app.inference.httpx.Client", return_value=ollama_client):
+            process_interaction(
+                ProcessInteractionRequest(
+                    owner_id="own_large_image",
+                    review_id="review_large_image",
+                    media_refs=[MEDIA_URL],
+                ),
+                current_date=date(2026, 10, 1),
+                media_client=client,
+                media_temp_root=Path(root_name),
+            )
+        client.close()
+
+        prepared_bytes = base64.b64decode(
+            captured_payload["messages"][2]["images"][0]
+        )
+        with Image.open(BytesIO(prepared_bytes)) as prepared_image:
+            after_dimensions = prepared_image.size
+            prepared_format = prepared_image.format
+
+        scrubbed_messages = [
+            {key: value for key, value in message.items() if key != "images"}
+            for message in captured_payload["messages"]
+        ]
+        text_and_schema_chars = len(
+            json.dumps(
+                {
+                    "messages": scrubbed_messages,
+                    "format": captured_payload["format"],
+                },
+                separators=(",", ":"),
+            )
+        )
+        estimated_prompt_tokens = (
+            math.ceil(text_and_schema_chars / 3)
+            + estimate_visual_tokens(*after_dimensions)
+        )
+        configured_num_ctx = captured_payload["options"]["num_ctx"]
+
+        self.assertEqual(prepared_format, "JPEG")
+        self.assertLessEqual(max(after_dimensions), VISION_MAX_LONG_EDGE)
+        self.assertLessEqual(after_dimensions[0] * after_dimensions[1], VISION_MAX_PIXELS)
+        self.assertLess(len(prepared_bytes), len(original_bytes))
+        self.assertEqual(configured_num_ctx, 8192)
+        self.assertLess(estimated_prompt_tokens + 1024, configured_num_ctx)
+        print(
+            "VISION_PREPROCESS_EVIDENCE "
+            f"before_dimensions={before_dimensions[0]}x{before_dimensions[1]} "
+            f"after_dimensions={after_dimensions[0]}x{after_dimensions[1]} "
+            f"before_bytes={len(original_bytes)} "
+            f"after_bytes={len(prepared_bytes)} "
+            f"estimated_prompt_tokens={estimated_prompt_tokens} "
+            f"response_reserve=1024 num_ctx={configured_num_ctx}"
+        )
 
     def test_downloaded_media_is_deleted_after_successful_inference(self) -> None:
         client = media_client()

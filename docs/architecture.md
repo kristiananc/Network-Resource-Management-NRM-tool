@@ -106,6 +106,12 @@ failure; local retention is not configurable. Vision outputs use the same
 schema-version 1.0 contract as text outputs, and captions are higher-priority
 semantic evidence than conflicting image text.
 
+Before inference, each image is EXIF-oriented, resized to at most 1,280 pixels
+on its long edge and about one megapixel total, then encoded as JPEG quality 85.
+Vision Ollama calls explicitly set a configurable context window through
+`NRM_OLLAMA_VISION_NUM_CTX`, defaulting to 8,192 tokens and capped at the
+model's documented current 32,768-token configuration.
+
 Handled local inference failures are logged as structured `inference_error`
 events before the HTTP error response is returned. The event identifies the
 request ID, safe error code, exception type, and pipeline stage without logging
