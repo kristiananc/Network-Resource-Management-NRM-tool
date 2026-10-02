@@ -222,6 +222,15 @@ class Stage6InferenceTests(unittest.TestCase):
         self.assertEqual(revised.details_json["warnings"], [])
         self.assertIn("exactly one change", captured["messages"][0]["content"])
         self.assertIn("warnings change only", captured["messages"][0]["content"])
+        self.assertIn(
+            "interaction.summary IS affected", captured["messages"][0]["content"]
+        )
+        self.assertIn(
+            "Change interaction.date only", captured["messages"][0]["content"]
+        )
+        self.assertIn(
+            "Change interaction.platform only", captured["messages"][0]["content"]
+        )
 
     def test_revision_cannot_regenerate_unaffected_fields(self) -> None:
         existing = InteractionDraft(
@@ -260,6 +269,304 @@ class Stage6InferenceTests(unittest.TestCase):
         self.assertEqual(revised.details_json, existing.details_json)
         self.assertEqual(revised.raw_body, existing.raw_body)
         self.assertEqual(revised.media_refs, existing.media_refs)
+
+    def test_revision_added_identity_and_topic_requires_summary_refresh(self) -> None:
+        existing = InteractionDraft(
+            interaction_date=date(2026, 9, 20),
+            platform="CALL",
+            summary="Discussed a potential collaboration.",
+            details_json={
+                "person": {
+                    "name": None,
+                    "phone": None,
+                    "email": None,
+                    "organization": None,
+                    "context_tag": None,
+                },
+                "identity": {"confidence": 0.2, "evidence": []},
+                "warnings": ["Person identity was not supplied."],
+            },
+            raw_body="Spoke with a new contact about a collaboration.",
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+        outputs = iter(
+            [
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "person.name", "value": "Maya Patel"},
+                        {
+                            "field": "person.organization",
+                            "value": "Acme Robotics",
+                        },
+                        {"field": "identity.confidence", "value": 0.95},
+                        {
+                            "field": "identity.evidence",
+                            "value": [
+                                "Correction supplied full name and organization."
+                            ],
+                        },
+                        {"field": "warnings", "value": []},
+                    ],
+                },
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "person.name", "value": "Maya Patel"},
+                        {
+                            "field": "person.organization",
+                            "value": "Acme Robotics",
+                        },
+                        {
+                            "field": "interaction.summary",
+                            "value": (
+                                "Discussed a warehouse automation pilot with an "
+                                "Acme Robotics contact."
+                            ),
+                        },
+                        {"field": "identity.confidence", "value": 0.95},
+                        {
+                            "field": "identity.evidence",
+                            "value": [
+                                "Correction supplied full name and organization."
+                            ],
+                        },
+                        {"field": "warnings", "value": []},
+                    ],
+                },
+            ]
+        )
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
+
+        revised = revise_draft(
+            ReviseDraftRequest(
+                owner_id="own_revision_summary",
+                review_id="review-revision-summary",
+                draft=existing,
+                correction=(
+                    "The person was Maya Patel from Acme Robotics, and we "
+                    "discussed a warehouse automation pilot."
+                ),
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("interaction.summary", calls[1][-1]["content"])
+        self.assertEqual(
+            revised.summary,
+            "Discussed a warehouse automation pilot with an Acme Robotics contact.",
+        )
+        self.assertEqual(revised.details_json["person"]["name"], "Maya Patel")
+        self.assertEqual(
+            revised.details_json["person"]["organization"], "Acme Robotics"
+        )
+        self.assertEqual(revised.details_json["identity"]["confidence"], 0.95)
+        self.assertEqual(revised.details_json["warnings"], [])
+        self.assertEqual(revised.interaction_date, existing.interaction_date)
+        self.assertEqual(revised.platform, existing.platform)
+
+    def test_revision_identity_typo_preserves_summary_date_and_platform(self) -> None:
+        existing = InteractionDraft(
+            interaction_date=date(2026, 9, 20),
+            platform="CALL",
+            summary="Discussed a warehouse automation pilot.",
+            details_json={
+                "person": {
+                    "name": "Maya Patel",
+                    "phone": None,
+                    "email": None,
+                    "organization": "Acme Robotics",
+                    "context_tag": "Robotics",
+                },
+                "identity": {"confidence": 0.9, "evidence": ["name supplied"]},
+                "warnings": [],
+            },
+            raw_body="Called Maya about the warehouse automation pilot.",
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+
+        def chat(_messages, _schema):
+            return json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "person.name", "value": "Maia Patel"}
+                    ],
+                }
+            )
+
+        revised = revise_draft(
+            ReviseDraftRequest(
+                owner_id="own_revision_typo",
+                review_id="review-revision-typo",
+                draft=existing,
+                correction="Her name is Maia Patel, not Maya Patel.",
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(revised.details_json["person"]["name"], "Maia Patel")
+        self.assertEqual(revised.summary, existing.summary)
+        self.assertEqual(revised.interaction_date, existing.interaction_date)
+        self.assertEqual(revised.platform, existing.platform)
+
+    def test_revision_rejects_unsupported_date_and_platform_then_repairs(self) -> None:
+        existing = InteractionDraft(
+            interaction_date=date(2026, 9, 20),
+            platform="CALL",
+            summary="Discussed a warehouse automation pilot.",
+            details_json={
+                "person": {
+                    "name": "Maya Patel",
+                    "phone": None,
+                    "email": None,
+                    "organization": "Acme Robotics",
+                    "context_tag": "Robotics",
+                },
+                "identity": {"confidence": 0.9, "evidence": ["name supplied"]},
+                "warnings": [],
+            },
+            raw_body="Called Maya about the warehouse automation pilot.",
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+        corrected_summary = (
+            "Discussed a warehouse automation pilot and data-integration constraints."
+        )
+        outputs = iter(
+            [
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.summary", "value": corrected_summary},
+                        {"field": "interaction.date", "value": "2026-09-30"},
+                        {"field": "interaction.platform", "value": "VIDEO_CALL"},
+                    ],
+                },
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.summary", "value": corrected_summary}
+                    ],
+                },
+            ]
+        )
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
+
+        revised = revise_draft(
+            ReviseDraftRequest(
+                owner_id="own_revision_scope",
+                review_id="review-revision-scope",
+                draft=existing,
+                correction=(
+                    "Add that we also discussed data-integration constraints."
+                ),
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("interaction.date", calls[1][-1]["content"])
+        self.assertIn("interaction.platform", calls[1][-1]["content"])
+        self.assertEqual(revised.summary, corrected_summary)
+        self.assertEqual(revised.interaction_date, existing.interaction_date)
+        self.assertEqual(revised.platform, existing.platform)
+
+    def test_revision_allows_explicit_date_and_platform_correction(self) -> None:
+        existing = InteractionDraft(
+            interaction_date=date(2026, 9, 20),
+            platform="CALL",
+            summary="Discussed a warehouse automation pilot.",
+            details_json={"warnings": []},
+            raw_body="Called about a warehouse automation pilot.",
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+
+        def chat(_messages, _schema):
+            return json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.date", "value": "2026-09-22"},
+                        {
+                            "field": "interaction.platform",
+                            "value": "VIDEO_CALL",
+                        },
+                    ],
+                }
+            )
+
+        revised = revise_draft(
+            ReviseDraftRequest(
+                owner_id="own_revision_explicit",
+                review_id="review-revision-explicit",
+                draft=existing,
+                correction="The date was September 22, and it was a video call.",
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(revised.interaction_date, date(2026, 9, 22))
+        self.assertEqual(revised.platform.value, "VIDEO_CALL")
+        self.assertEqual(revised.summary, existing.summary)
+
+    def test_revision_rejects_scope_violation_after_one_repair(self) -> None:
+        existing = InteractionDraft(
+            interaction_date=date(2026, 9, 20),
+            platform="CALL",
+            summary="Discussed a warehouse automation pilot.",
+            details_json={"warnings": []},
+            raw_body="Called about a warehouse automation pilot.",
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {
+                            "field": "interaction.platform",
+                            "value": "VIDEO_CALL",
+                        }
+                    ],
+                }
+            )
+
+        with self.assertRaises(InferenceError) as captured:
+            revise_draft(
+                ReviseDraftRequest(
+                    owner_id="own_revision_rejected",
+                    review_id="review-revision-rejected",
+                    draft=existing,
+                    correction="Correct the person's organization to Acme Robotics.",
+                ),
+                chat=chat,
+            )
+
+        self.assertEqual(captured.exception.code, "AI_SCHEMA_ERROR")
+        self.assertIn("interaction.platform", captured.exception.message)
+        self.assertEqual(len(calls), 2)
 
     def test_ollama_connection_failure_is_categorized(self) -> None:
         request = httpx.Request("POST", "http://192.168.0.200:11434/api/chat")

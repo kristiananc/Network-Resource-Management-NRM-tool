@@ -109,6 +109,121 @@
         },
         "warnings_exact": []
       }
+    },
+    {
+      "id": "correction_substantive_identity_topic",
+      "type": "revise",
+      "owner_id": "own_corpus_a",
+      "correction": "The person was Maya Patel from Acme Robotics, and we discussed a warehouse automation pilot.",
+      "draft": {
+        "interaction_date": "2026-09-20",
+        "platform": "CALL",
+        "summary": "Discussed a potential collaboration.",
+        "details_json": {
+          "person": {
+            "name": null,
+            "phone": null,
+            "email": null,
+            "organization": null,
+            "context_tag": null
+          },
+          "identity": {
+            "confidence": 0.2,
+            "evidence": []
+          },
+          "warnings": ["Person identity was not supplied."]
+        },
+        "raw_body": "Spoke with a new contact about a collaboration.",
+        "media_refs": [],
+        "ai_model": "llama3.1:8b",
+        "schema_version": "1.0"
+      },
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "person.name": "Maya Patel",
+          "person.organization": "Acme Robotics",
+          "interaction.date": "2026-09-20",
+          "interaction.platform": "CALL"
+        },
+        "summary_contains": ["warehouse automation", "Acme Robotics"],
+        "summary_excludes": ["Maya Patel"]
+      }
+    },
+    {
+      "id": "correction_identity_typo_only",
+      "type": "revise",
+      "owner_id": "own_corpus_b",
+      "correction": "Her name is Maia Patel, not Maya Patel.",
+      "draft": {
+        "interaction_date": "2026-09-20",
+        "platform": "CALL",
+        "summary": "Discussed a warehouse automation pilot.",
+        "details_json": {
+          "person": {
+            "name": "Maya Patel",
+            "phone": null,
+            "email": null,
+            "organization": "Acme Robotics",
+            "context_tag": "Robotics"
+          },
+          "identity": {
+            "confidence": 0.9,
+            "evidence": ["name supplied"]
+          },
+          "warnings": []
+        },
+        "raw_body": "Called Maya about the warehouse automation pilot.",
+        "media_refs": [],
+        "ai_model": "llama3.1:8b",
+        "schema_version": "1.0"
+      },
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "person.name": "Maia Patel",
+          "interaction.date": "2026-09-20",
+          "interaction.platform": "CALL",
+          "interaction.summary": "Discussed a warehouse automation pilot."
+        }
+      }
+    },
+    {
+      "id": "correction_topic_preserves_date_platform",
+      "type": "revise",
+      "owner_id": "own_corpus_a",
+      "correction": "Add that we also discussed data-integration constraints.",
+      "draft": {
+        "interaction_date": "2026-09-20",
+        "platform": "CALL",
+        "summary": "Discussed a warehouse automation pilot.",
+        "details_json": {
+          "person": {
+            "name": "Maya Patel",
+            "phone": null,
+            "email": null,
+            "organization": "Acme Robotics",
+            "context_tag": "Robotics"
+          },
+          "identity": {
+            "confidence": 0.9,
+            "evidence": ["name supplied"]
+          },
+          "warnings": []
+        },
+        "raw_body": "Called Maya about the warehouse automation pilot.",
+        "media_refs": [],
+        "ai_model": "llama3.1:8b",
+        "schema_version": "1.0"
+      },
+      "expected": {
+        "exact": {
+          "schema_version": "1.0",
+          "interaction.date": "2026-09-20",
+          "interaction.platform": "CALL"
+        },
+        "summary_contains": ["warehouse automation", "data-integration"]
+      }
     }
   ]
 }

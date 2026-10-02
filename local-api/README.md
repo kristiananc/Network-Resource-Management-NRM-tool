@@ -103,11 +103,26 @@ outages, prompt isolation, and revision preservation are deterministic:
 PYTHONPATH=local-api python3 -m unittest discover -s local-api/tests -v
 ```
 
+The revision path additionally enforces semantic scope after schema validation:
+a new organization/context or substantive topic requires a refreshed summary,
+while date and platform changes require supporting cues in the correction. A
+violating model patch receives the same single repair attempt as malformed or
+schema-invalid output; a second violation fails instead of being merged.
+
+Run the deterministic revision regression to print complete before/after draft
+JSON for the substantive-summary, typo-preservation, and unsupported-field
+cases:
+
+```shell
+PYTHONPATH=local-api python3 local-api/scripts/run_revision_regression.py
+```
+
 ## Live regression corpus
 
 The versioned corpus is `local-api/regression/corpus.json`. It includes new and
 existing contact references, an ambiguous date, a missing organization, two
-synthetic owners, and a correction that must change only the platform.
+synthetic owners, a platform-only correction, and the three revision-scope
+scenarios covered by the deterministic runner above.
 
 With Ollama reachable:
 
