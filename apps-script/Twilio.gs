@@ -16,8 +16,6 @@ function doPost(e) {
     const inbound = parseAndVerifyWorkerWebhook_(e);
     ownerId = inbound.owner_id;
     const normalized = _nrmNormalizedEventFromWorker_(inbound);
-    const openReview = _nrmFindOpenReviewForSender_(inbound.from, ownerId);
-    if (openReview) normalized.review_id = openReview.review_id;
 
     const result = handleNormalizedEvent(normalized);
     const replyText = _nrmTwilioReplyMessage_(result, ownerId);
@@ -156,23 +154,6 @@ function _nrmNowMs_() {
   return NRM_TEST_NOW_MS_ === null ? Date.now() : NRM_TEST_NOW_MS_;
 }
 
-function _nrmFindOpenReviewForSender_(fromNumber, ownerId) {
-  const canonicalSender = _nrmCanonicalSenderNumber_(fromNumber);
-  const matches = _nrmReadOwnedRows_('Staging', ownerId).filter(function (entry) {
-    return _nrmCanonicalSenderNumber_(entry.record.owner_number) === canonicalSender;
-  });
-  if (matches.length > 1) {
-    throw new Error('AMBIGUOUS_ACTIVE_REVIEW: sender has more than one open review.');
-  }
-  return matches.length === 1 ? matches[0].record : null;
-}
-
-function _nrmCanonicalSenderNumber_(value) {
-  const normalized = String(value === undefined || value === null ? '' : value).trim();
-  const e164Digits = normalized.match(/^\+?(\d+)$/);
-  return e164Digits ? '+' + e164Digits[1] : normalized;
-}
-
 function _nrmTwilioReplyMessage_(result, ownerId) {
   if (!result || Object.prototype.toString.call(result) !== '[object Object]') {
     throw new Error('INVALID_STATE_RESULT');
@@ -204,6 +185,9 @@ function _nrmTwilioReplyMessage_(result, ownerId) {
   }
 
   if (result.state === 'COMMITTED') return 'Interaction saved.';
+  if (result.state === 'CANCELLED' || result.state === 'NO_OPEN_REVIEW' || result.state === 'BUSY') {
+    return String(result.message || 'Message received.');
+  }
   if (result.state === 'ERROR') return String(result.message || 'Processing failed.');
   return String(result.message || 'Message received.');
 }

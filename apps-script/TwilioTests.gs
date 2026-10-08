@@ -9,6 +9,7 @@ function runStage5AppsScriptTests() {
     _nrmRunTest_('Twilio REST request construction', _nrmTestTwilioRestRequestConstruction_),
     _nrmRunTest_('two-owner outbound SMS review loop isolation', _nrmTestWorkerTwoOwnerLoop_),
     _nrmRunTest_('missing-date outbound prompt', _nrmTestMissingDateOutboundPrompt_),
+    _nrmRunTest_('open-review rejection and CANCEL SMS', _nrmTestOpenReviewAndCancelSms_),
     _nrmRunTest_('outbound failure state integrity', _nrmTestOutboundFailureStateIntegrity_),
     _nrmRunTest_('safe empty TwiML acknowledgement', _nrmTestSafeWorkerResponses_)
   ];
@@ -109,6 +110,7 @@ function _nrmTestWorkerTwoOwnerLoop_() {
     _nrmAssert_(sentMessages[0].to === '+15550000001', 'Owner A SMS recipient changed.');
     _nrmAssert_(sentMessages[0].from === '+15559999999', 'Owner A SMS sender changed.');
     _nrmAssert_(sentMessages[1].body.indexOf('Reply YES to confirm') !== -1, 'Owner B review SMS missing.');
+    _nrmAssert_(sentMessages[1].body.indexOf('reply CANCEL') !== -1, 'Owner B review SMS omitted new-entry cancellation guidance.');
     _nrmAssert_(sentMessages[1].to === '+15550000002', 'Owner B SMS recipient changed.');
 
     const ownerAChoice = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_A, '+15550000001', 'SM5_A_CHOICE', '2'));
@@ -186,6 +188,47 @@ function _nrmTestMissingDateOutboundPrompt_() {
     _nrmAssert_(sentMessages[0].body.indexOf('I need a date for this.') !== -1, 'Review SMS omitted the date prompt.');
     _nrmAssert_(sentMessages[0].body.indexOf('NO DATE') !== -1, 'Review SMS omitted the explicit NO DATE choice.');
     return 'PASS missing-date outbound prompt: review SMS included the summary, specific date request, relative-date example, and explicit NO DATE choice.';
+  });
+}
+
+function _nrmTestOpenReviewAndCancelSms_() {
+  return _nrmWithStage5Spreadsheet_(function () {
+    const sentMessages = [];
+    NRM_TEST_TWILIO_CLIENT_ = function (message) {
+      sentMessages.push(Object.assign({}, message));
+      return { message_sid: 'SM_OUTBOUND_OPEN_REVIEW_' + sentMessages.length };
+    };
+    const processing = createStaging({
+      message_sid: 'SM5_PROCESSING_ORIGINAL', owner_number: '+15550000001',
+      state: 'PROCESSING', raw_body: 'Original entry.',
+      draft_json: { contact: {}, contact_query: '' }
+    }, NRM_TEST_OWNER_A);
+
+    doPost(_nrmStage5WorkerEvent_(
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_PROCESSING_SECOND',
+      'A second entry that must be rejected.'
+    ));
+    _nrmAssert_(sentMessages[0].body === 'Still working on your previous entry. Please resend this message in a minute.', 'PROCESSING SMS guidance is wrong.');
+    _nrmAssert_(findStagingByReviewId(processing.review_id, NRM_TEST_OWNER_A).state === 'PROCESSING', 'Rejected SMS changed PROCESSING state.');
+
+    doPost(_nrmStage5WorkerEvent_(
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_PROCESSING_CANCEL', 'CANCEL'
+    ));
+    _nrmAssert_(sentMessages[1].body === 'Previous review cancelled. You can send a new entry now.', 'CANCEL confirmation SMS is wrong.');
+    _nrmAssert_(findStagingByReviewId(processing.review_id, NRM_TEST_OWNER_A) === null, 'CANCEL SMS path did not delete Staging.');
+
+    doPost(_nrmStage5WorkerEvent_(
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_CANCEL_NO_OPEN', 'CANCEL'
+    ));
+    _nrmAssert_(sentMessages[2].body === 'There is no open review to cancel. Send a new entry when you are ready.', 'No-open CANCEL reply is wrong.');
+    const rejections = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+      return entry.record.event_type === 'MESSAGE_REJECTED_OPEN_REVIEW';
+    });
+    const cancellations = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+      return entry.record.event_type === 'CANCELLED';
+    });
+    _nrmAssert_(rejections.length === 1 && cancellations.length === 1, 'Open-review rejection or CANCELLED log missing.');
+    return 'PASS open-review rejection and CANCEL SMS: PROCESSING got immediate resend guidance, CANCEL removed only Staging and confirmed, and no-open CANCEL returned harmless guidance.';
   });
 }
 

@@ -12,6 +12,9 @@ function runStage3Tests() {
     _nrmRunTest_('missing date prompt then supplied date', _nrmTestMissingDatePromptAndCorrection_),
     _nrmRunTest_('explicit NO DATE approval', _nrmTestExplicitNoDateApproval_),
     _nrmRunTest_('missing contact name prompt', _nrmTestMissingContactNamePrompt_),
+    _nrmRunTest_('open-review per-state routing trace', _nrmTestOpenReviewStateRouting_),
+    _nrmRunTest_('CANCEL and command isolation', _nrmTestCancelAndCommandIsolation_),
+    _nrmRunTest_('PROCESSING lock contention reply', _nrmTestProcessingLockContention_),
     _nrmRunTest_('OWNER_MISMATCH hard rejection', _nrmTestOwnerMismatchCommit_),
     _nrmRunTest_('Local API owner passthrough guard', _nrmTestLocalAiOwnerMismatch_),
     _nrmRunTest_('candidate and YES parsing', _nrmTestReplyParsing_),
@@ -387,6 +390,189 @@ function _nrmTestMissingContactNamePrompt_() {
     _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === 2, 'Missing name partially wrote Contact.');
     _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'Missing name wrote Interaction.');
     return 'PASS missing contact name prompt: unnamed capture stayed PENDING_REVIEW, named contact.display_name in plain language, and premature YES wrote nothing permanent.';
+  });
+}
+
+function _nrmTestOpenReviewStateRouting_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    const trace = [];
+    const originalClient = NRM_TEST_LOCAL_AI_CLIENT_;
+
+    const processing = createStaging({
+      message_sid: 'SM3_TRACE_PROCESSING_ORIGINAL', owner_number: '+15550000901',
+      state: 'PROCESSING', raw_body: 'Original processing capture.',
+      draft_json: { contact: {}, contact_query: '' }
+    }, NRM_TEST_OWNER_A);
+    NRM_TEST_LOCAL_AI_CLIENT_ = function () {
+      throw new Error('Processing rejection must not invoke Local AI.');
+    };
+    const processingReply = handleNormalizedEvent({
+      message_sid: 'SM3_TRACE_PROCESSING_NEW', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000901', body: 'Second capture while processing.'
+    });
+    _nrmAssert_(processingReply.state === 'PROCESSING', 'PROCESSING rejection changed state.');
+    _nrmAssert_(processingReply.message === 'Still working on your previous entry. Please resend this message in a minute.', 'PROCESSING reply is wrong.');
+    _nrmAssert_(findStagingByReviewId(processing.review_id, NRM_TEST_OWNER_A).state === 'PROCESSING', 'PROCESSING row changed.');
+    trace.push('PROCESSING=>rejected/state unchanged/reply=resend in a minute');
+    deleteStaging(processing.review_id, NRM_TEST_OWNER_A);
+
+    NRM_TEST_LOCAL_AI_CLIENT_ = originalClient;
+    const disambiguating = createStaging({
+      message_sid: 'SM3_TRACE_DISAMBIGUATING_ORIGINAL', owner_number: '+15550000902',
+      state: 'DISAMBIGUATING', raw_body: 'Ambiguous capture.',
+      candidate_contact_ids: ['contact_a_navwar', 'contact_a_usc'],
+      draft_json: { contact: { display_name: 'Sarah Chen' }, interaction: _nrmStage3DummyDraft_('Ambiguous capture.', []) }
+    }, NRM_TEST_OWNER_A);
+    const disambiguatingReply = handleNormalizedEvent({
+      message_sid: 'SM3_TRACE_DISAMBIGUATING_NEW', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000902', body: 'Joe is someone else.'
+    });
+    _nrmAssert_(disambiguatingReply.state === 'DISAMBIGUATING', 'Invalid candidate changed state.');
+    _nrmAssert_(disambiguatingReply.message.indexOf('waiting for a contact choice') !== -1, 'Disambiguation guidance missing.');
+    trace.push('DISAMBIGUATING=>rejected/state unchanged/reply=choose 1-2 or CANCEL');
+    deleteStaging(disambiguating.review_id, NRM_TEST_OWNER_A);
+
+    const pending = createStaging({
+      message_sid: 'SM3_TRACE_PENDING_ORIGINAL', owner_number: '+15550000903',
+      state: 'PENDING_REVIEW', raw_body: 'Pending capture.',
+      selected_contact_id: 'contact_a_navwar',
+      draft_json: { contact: { display_name: 'Sarah Chen' }, interaction: _nrmStage3DummyDraft_('Pending capture.', []) }
+    }, NRM_TEST_OWNER_A);
+    const pendingReply = handleNormalizedEvent({
+      message_sid: 'SM3_TRACE_PENDING_NEW', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000903', body: 'Correct the summary.'
+    });
+    _nrmAssert_(pendingReply.state === 'PENDING_REVIEW', 'PENDING correction did not return to review.');
+    const pendingAfter = findStagingByReviewId(pending.review_id, NRM_TEST_OWNER_A);
+    _nrmAssert_(Number(pendingAfter.revision_count) === 1, 'PENDING correction did not increment revision_count.');
+    trace.push('PENDING_REVIEW=>processed as correction/revision_count=1/state=PENDING_REVIEW');
+    deleteStaging(pending.review_id, NRM_TEST_OWNER_A);
+
+    const failed = createStaging({
+      message_sid: 'SM3_TRACE_ERROR_ORIGINAL', owner_number: '+15550000904',
+      state: 'ERROR', raw_body: 'Failed capture.',
+      error_json: { code: 'TEST_ERROR' },
+      draft_json: { contact: {}, interaction: _nrmStage3DummyDraft_('Failed capture.', []) }
+    }, NRM_TEST_OWNER_A);
+    const errorReply = handleNormalizedEvent({
+      message_sid: 'SM3_TRACE_ERROR_NEW', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000904', body: 'Another capture.'
+    });
+    _nrmAssert_(errorReply.state === 'ERROR', 'ERROR rejection changed state.');
+    _nrmAssert_(errorReply.message.indexOf('Reply CANCEL to clear it') !== -1, 'ERROR recovery guidance missing.');
+    trace.push('ERROR=>rejected/state unchanged/reply=CANCEL then resend');
+
+    const rejectionEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+      return entry.record.event_type === 'MESSAGE_REJECTED_OPEN_REVIEW';
+    });
+    _nrmAssert_(rejectionEvents.length === 3, 'Expected PROCESSING, DISAMBIGUATING, and ERROR rejection logs.');
+    const rejectionDetails = rejectionEvents.map(function (entry) {
+      return _nrmParseJsonObject_(entry.record.details, {});
+    });
+    _nrmAssert_(rejectionDetails.every(function (details) {
+      return details.message_sid && details.existing_review_id && details.state;
+    }), 'Rejection log is missing message_sid, existing_review_id, or state.');
+    _nrmAssert_(JSON.stringify(rejectionDetails).indexOf('Second capture while processing.') === -1, 'Rejection log retained raw message body.');
+    const acceptedPending = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+      const details = _nrmParseJsonObject_(entry.record.details, {});
+      return entry.record.event_type === 'MESSAGE_ACCEPTED' &&
+        details.message_sid === 'SM3_TRACE_PENDING_NEW';
+    });
+    _nrmAssert_(acceptedPending.length === 1, 'Processed PENDING correction was not logged as accepted exactly once.');
+    return 'PASS open-review per-state routing trace: ' + trace.join('; ') + '; three rejected messages logged with SID/review/state and no raw bodies.';
+  });
+}
+
+function _nrmTestCancelAndCommandIsolation_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    const ownerAContactsBefore = _nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length;
+    const ownerBContactsBefore = _nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length;
+    const ownerA = createStaging({
+      message_sid: 'SM3_CANCEL_A_ORIGINAL', owner_number: '+15550000801',
+      state: 'ERROR', raw_body: 'OWNER_A_PRIVATE_BODY',
+      error_json: { code: 'TEST_ERROR' }
+    }, NRM_TEST_OWNER_A);
+    const ownerB = createStaging({
+      message_sid: 'SM3_CANCEL_B_ORIGINAL', owner_number: '+15550000802',
+      state: 'PENDING_REVIEW', raw_body: 'OWNER_B_PRIVATE_BODY',
+      selected_contact_id: 'contact_b_work',
+      draft_json: { contact: { display_name: 'Sarah Chen' }, interaction: _nrmStage3DummyDraft_('Owner B.', []) }
+    }, NRM_TEST_OWNER_B);
+
+    const cancelled = handleNormalizedEvent({
+      message_sid: 'SM3_CANCEL_A_COMMAND', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000801', body: ' cancel '
+    });
+    _nrmAssert_(cancelled.state === 'CANCELLED', 'CANCEL did not confirm cancellation.');
+    _nrmAssert_(findStagingByReviewId(ownerA.review_id, NRM_TEST_OWNER_A) === null, 'Owner A Staging row remained.');
+    _nrmAssert_(findStagingByReviewId(ownerB.review_id, NRM_TEST_OWNER_B) !== null, 'Owner A CANCEL deleted Owner B Staging.');
+
+    const crossOwnerCancel = handleNormalizedEvent({
+      message_sid: 'SM3_CANCEL_CROSS_OWNER', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000801', review_id: ownerB.review_id, body: 'CANCEL'
+    });
+    _nrmAssert_(crossOwnerCancel.state === 'ERROR', 'Foreign review_id was not rejected.');
+    _nrmAssert_(findStagingByReviewId(ownerB.review_id, NRM_TEST_OWNER_B) !== null, 'Cross-owner CANCEL deleted Owner B Staging.');
+
+    const noOpenCancel = handleNormalizedEvent({
+      message_sid: 'SM3_CANCEL_NO_OPEN', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000801', body: 'CANCEL'
+    });
+    _nrmAssert_(noOpenCancel.state === 'NO_OPEN_REVIEW', 'CANCEL without review started a capture.');
+    const noOpenDate = handleNormalizedEvent({
+      message_sid: 'SM3_NO_DATE_NO_OPEN', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000801', body: 'NO DATE'
+    });
+    _nrmAssert_(noOpenDate.state === 'NO_OPEN_REVIEW', 'NO DATE without review started a capture.');
+    _nrmAssert_(_nrmReadOwnedRows_('Staging', NRM_TEST_OWNER_A).length === 0, 'Command without open review created Staging.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === ownerAContactsBefore, 'CANCEL changed Owner A Contacts.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length === ownerBContactsBefore, 'CANCEL changed Owner B Contacts.');
+    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'CANCEL changed Owner A Interactions.');
+    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_B).length === 0, 'CANCEL changed Owner B Interactions.');
+
+    const cancelledEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+      return entry.record.event_type === 'CANCELLED';
+    });
+    _nrmAssert_(cancelledEvents.length === 1, 'CANCELLED event missing.');
+    const cancelDetails = _nrmParseJsonObject_(cancelledEvents[0].record.details, {});
+    _nrmAssert_(cancelDetails.message_sid === 'SM3_CANCEL_A_COMMAND', 'CANCELLED log has wrong MessageSid.');
+    _nrmAssert_(cancelDetails.existing_review_id === ownerA.review_id && cancelDetails.state === 'ERROR', 'CANCELLED log lacks prior review/state.');
+    const serializedEvents = JSON.stringify(_nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A));
+    _nrmAssert_(serializedEvents.indexOf('OWNER_A_PRIVATE_BODY') === -1, 'CANCEL EventLog retained raw body.');
+    return 'PASS CANCEL and command isolation: owner A deleted only its ERROR Staging row; owner B row and both owners\' Contacts/Interactions were untouched; CANCEL/NO DATE without an open review created no capture.';
+  });
+}
+
+function _nrmTestProcessingLockContention_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    const processing = createStaging({
+      message_sid: 'SM3_LOCK_ORIGINAL', owner_number: '+15550000701',
+      state: 'PROCESSING', raw_body: 'Original slow inference.',
+      draft_json: { contact: {}, contact_query: '' }
+    }, NRM_TEST_OWNER_A);
+    const previousLock = NRM_TEST_STATE_LOCK_;
+    let requestedWait = null;
+    NRM_TEST_STATE_LOCK_ = {
+      tryLock: function (waitMs) { requestedWait = waitMs; return false; },
+      releaseLock: function () { throw new Error('Unacquired lock must not be released.'); }
+    };
+    try {
+      const result = handleNormalizedEvent({
+        message_sid: 'SM3_LOCK_SECOND', owner_id: NRM_TEST_OWNER_A,
+        owner_number: '+15550000701', body: 'Second message during slow inference.'
+      });
+      _nrmAssert_(requestedWait === 1000, 'Lock contention did not use the one-second bound.');
+      _nrmAssert_(result.state === 'PROCESSING', 'Lock contention lost the open PROCESSING state.');
+      _nrmAssert_(result.message === 'Still working on your previous entry. Please resend this message in a minute.', 'Lock contention reply is wrong.');
+      _nrmAssert_(findStagingByReviewId(processing.review_id, NRM_TEST_OWNER_A).state === 'PROCESSING', 'Lock contention changed Staging.');
+      const rejected = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+        return entry.record.event_type === 'MESSAGE_REJECTED_OPEN_REVIEW';
+      });
+      _nrmAssert_(rejected.length === 1, 'Lock contention rejection was not logged.');
+      return 'PASS PROCESSING lock contention reply: failed one-second lock acquisition returned the exact resend guidance, preserved PROCESSING Staging, and logged MESSAGE_REJECTED_OPEN_REVIEW.';
+    } finally {
+      NRM_TEST_STATE_LOCK_ = previousLock;
+    }
   });
 }
 

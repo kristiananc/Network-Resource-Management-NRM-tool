@@ -4,6 +4,7 @@
 
 const NRM_YES_REPLIES = Object.freeze(['YES', 'Y']);
 const NRM_NO_DATE_REPLY = 'NO DATE';
+const NRM_CANCEL_REPLY = 'CANCEL';
 
 function routeNormalizedEvent(event) {
   const normalized = _nrmNormalizeEvent_(event);
@@ -18,7 +19,17 @@ function routeNormalizedEvent(event) {
   }
 
   if (!normalized.review_id) {
-    return _nrmStartCapture_(normalized);
+    const openReview = _nrmFindOpenReviewForSender_(
+      normalized.owner_number,
+      normalized.owner_id
+    );
+    if (openReview) {
+      normalized.review_id = openReview.review_id;
+    } else if (isCancelReply_(normalized.body) || isNoDateReply_(normalized.body)) {
+      return _nrmHandleCommandWithoutOpenReview_(normalized);
+    } else {
+      return _nrmStartCapture_(normalized);
+    }
   }
 
   const staging = findStagingByReviewId(normalized.review_id, normalized.owner_id);
@@ -38,11 +49,17 @@ function routeNormalizedEvent(event) {
     };
   }
 
-  _nrmLogMessageAccepted_(normalized, staging.review_id);
+  if (isCancelReply_(normalized.body)) {
+    _nrmLogMessageAccepted_(normalized, staging.review_id);
+    return _nrmCancelOpenReview_(staging, normalized);
+  }
   return _nrmDispatchState_(staging, normalized);
 }
 
 function handleProcessing_(staging, event) {
+  if (event.message_sid !== staging.message_sid) {
+    return _nrmRejectOpenReviewMessage_(staging, event);
+  }
   const seed = _nrmParseJsonObject_(staging.draft_json, {});
   const response = processInteractionWithLocalAi_({
     owner_id: staging.owner_id,
@@ -107,11 +124,15 @@ function handleDisambiguating_(staging, event) {
   });
   const candidateIndex = parseCandidateNumber_(event.body, ownedCandidates.length);
   if (candidateIndex === null) {
-    return _nrmStateResult_(staging, {
-      message: 'Invalid candidate number. Reply with 1-' + ownedCandidates.length + '.'
-    });
+    return _nrmRejectOpenReviewMessage_(
+      staging,
+      event,
+      'This review is waiting for a contact choice. Reply with 1-' +
+        ownedCandidates.length + ', or reply CANCEL to discard it.'
+    );
   }
 
+  _nrmLogMessageAccepted_(event, staging.review_id);
   const pending = updateStaging(staging.review_id, {
     state: 'PENDING_REVIEW',
     selected_contact_id: ownedCandidates[candidateIndex].contact_id,
@@ -121,6 +142,7 @@ function handleDisambiguating_(staging, event) {
 }
 
 function handlePendingReview_(staging, event) {
+  _nrmLogMessageAccepted_(event, staging.review_id);
   if (isYesApproval_(event.body)) {
     return _nrmCommitApprovedReview_(staging, event);
   }
@@ -169,10 +191,8 @@ function handleRevising_(staging, event) {
   return _nrmPendingReviewResult_(pending, 'Revision ready. ');
 }
 
-function handleError_(staging) {
-  return _nrmStateResult_(staging, {
-    message: 'Review is in ERROR and requires recovery.'
-  });
+function handleError_(staging, event) {
+  return _nrmRejectOpenReviewMessage_(staging, event);
 }
 
 function parseCandidateNumber_(body, candidateCount) {
@@ -193,6 +213,10 @@ function isYesApproval_(body) {
 
 function isNoDateReply_(body) {
   return String(body || '').trim().toUpperCase() === NRM_NO_DATE_REPLY;
+}
+
+function isCancelReply_(body) {
+  return String(body || '').trim().toUpperCase() === NRM_CANCEL_REPLY;
 }
 
 function _nrmStartCapture_(event) {
@@ -218,7 +242,7 @@ function _nrmDispatchState_(staging, event) {
     if (staging.state === 'PROCESSING') return handleProcessing_(staging, event);
     if (staging.state === 'DISAMBIGUATING') return handleDisambiguating_(staging, event);
     if (staging.state === 'PENDING_REVIEW') return handlePendingReview_(staging, event);
-    if (staging.state === 'REVISING') return handleRevising_(staging, event);
+    if (staging.state === 'REVISING') return _nrmRejectOpenReviewMessage_(staging, event);
     if (staging.state === 'ERROR') return handleError_(staging, event);
     throw new Error('INVALID_STATE: ' + staging.state);
   } catch (error) {
@@ -306,11 +330,107 @@ function _nrmPendingReviewResult_(staging, prefix) {
   const issues = _nrmReviewValidationIssues_(staging, bundle);
   const instruction = issues.length
     ? issues.map(function (issue) { return issue.prompt; }).join(' ')
-    : 'Reply YES to confirm, or send a correction.';
+    : 'Reply YES to confirm, or send a correction. To log something else, reply CANCEL to discard this review, then resend.';
   return _nrmStateResult_(staging, {
     message: String(prefix || '') + instruction,
     missing_fields: issues.map(function (issue) { return issue.field; })
   });
+}
+
+function _nrmCancelOpenReview_(staging, event) {
+  const ownerId = staging.owner_id;
+  const details = {
+    message_sid: event.message_sid,
+    existing_review_id: staging.review_id,
+    state: staging.state
+  };
+  if (!deleteStaging(staging.review_id, ownerId)) {
+    throw new Error('STAGING_NOT_FOUND: ' + staging.review_id);
+  }
+  logEvent({
+    review_id: staging.review_id,
+    event_type: 'CANCELLED',
+    status: 'SUCCESS',
+    details: details
+  }, ownerId);
+  return {
+    owner_id: ownerId,
+    review_id: staging.review_id,
+    state: 'CANCELLED',
+    duplicate: false,
+    message: 'Previous review cancelled. You can send a new entry now.'
+  };
+}
+
+function _nrmHandleCommandWithoutOpenReview_(event) {
+  const command = isCancelReply_(event.body) ? 'CANCEL' : 'NO_DATE';
+  logEvent({
+    event_type: 'COMMAND_REJECTED_NO_OPEN_REVIEW',
+    status: 'FAILURE',
+    details: {
+      message_sid: event.message_sid,
+      command: command,
+      state: 'NONE'
+    }
+  }, event.owner_id);
+  return {
+    owner_id: event.owner_id,
+    review_id: '',
+    state: 'NO_OPEN_REVIEW',
+    duplicate: false,
+    message: command === 'CANCEL'
+      ? 'There is no open review to cancel. Send a new entry when you are ready.'
+      : 'There is no open review waiting for a date. Send a new entry first.'
+  };
+}
+
+function _nrmRejectOpenReviewMessage_(staging, event, message) {
+  logEvent({
+    review_id: staging.review_id,
+    event_type: 'MESSAGE_REJECTED_OPEN_REVIEW',
+    status: 'RETRY',
+    details: {
+      message_sid: event.message_sid,
+      existing_review_id: staging.review_id,
+      state: staging.state
+    }
+  }, staging.owner_id);
+  return _nrmStateResult_(staging, {
+    message: message || _nrmOpenReviewInstruction_(staging.state)
+  });
+}
+
+function _nrmOpenReviewInstruction_(state) {
+  if (state === 'PROCESSING' || state === 'REVISING') {
+    return 'Still working on your previous entry. Please resend this message in a minute.';
+  }
+  if (state === 'PENDING_REVIEW') {
+    return 'Finish your open review first: reply YES or send a correction, or reply CANCEL to discard it. Then resend this message.';
+  }
+  if (state === 'ERROR') {
+    return 'Your previous entry failed. Reply CANCEL to clear it, then resend your entry.';
+  }
+  if (state === 'DISAMBIGUATING') {
+    return 'Finish choosing a contact for your open review, or reply CANCEL to discard it.';
+  }
+  return 'Finish or cancel your open review, then resend this message.';
+}
+
+function _nrmFindOpenReviewForSender_(fromNumber, ownerId) {
+  const canonicalSender = _nrmCanonicalSenderNumber_(fromNumber);
+  const matches = _nrmReadOwnedRows_('Staging', ownerId).filter(function (entry) {
+    return _nrmCanonicalSenderNumber_(entry.record.owner_number) === canonicalSender;
+  });
+  if (matches.length > 1) {
+    throw new Error('AMBIGUOUS_ACTIVE_REVIEW: sender has more than one open review.');
+  }
+  return matches.length === 1 ? matches[0].record : null;
+}
+
+function _nrmCanonicalSenderNumber_(value) {
+  const normalized = String(value === undefined || value === null ? '' : value).trim();
+  const e164Digits = normalized.match(/^\+?(\d+)$/);
+  return e164Digits ? '+' + e164Digits[1] : normalized;
 }
 
 function _nrmReviewValidationIssues_(staging, bundle) {

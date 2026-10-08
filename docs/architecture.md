@@ -73,6 +73,23 @@ after a subsequent `YES`. The same preflight names other correctable required
 fields, including a missing new-contact display name. This uses the frozen v1
 Staging headers and workflow-state enum without adding a column or state.
 
+Only one Staging review may be open for a sender/owner pair. Open-review lookup
+runs inside the state-machine lock so a webhook cannot make a stale routing
+decision before waiting for another execution. Lock contention is bounded to
+one second; a message arriving during `PROCESSING`/`REVISING` is not treated as
+a new capture and is logged as `MESSAGE_REJECTED_OPEN_REVIEW` with only its
+MessageSid, existing review ID, and state. Invalid `DISAMBIGUATING` input and
+messages received in `ERROR` are rejected and logged the same way. A
+`PENDING_REVIEW` reply remains intentionally interpretable as either `YES` or
+a free-form correction; concurrent-review queuing and semantic classification
+of a second capture are out of scope.
+
+The exact `CANCEL` command deletes only the sender's owner-scoped Staging row,
+logs `CANCELLED`, and never changes Contacts or Interactions. `CANCEL` and
+`NO DATE` with no open review return harmless guidance and cannot start a new
+capture. No new Staging column or workflow state is used; `CANCELLED`,
+`NO_OPEN_REVIEW`, and `BUSY` are transient response states only.
+
 The historical command-parser in `legacy/original_apps_script.gs` is a
 read-only archive and is not loaded, imported, or used by this active path.
 
