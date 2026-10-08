@@ -163,10 +163,15 @@ function createContact(contactData, owner_id) {
   return _nrmAppendObject_('Contacts', data);
 }
 
-function appendInteraction(interactionData, owner_id) {
+function appendInteraction(interactionData, owner_id, writeOptions) {
   const ownerId = _nrmRequireOwnerId_(owner_id);
   const data = _nrmOwnedCopy_(interactionData, ownerId, 'Interaction');
-  _nrmRequireFields_(data, ['contact_id', 'interaction_date', 'platform', 'summary'], 'Interaction');
+  const options = writeOptions || {};
+  const requiredFields = ['contact_id', 'platform', 'summary'];
+  if (options.allow_explicit_no_date !== true) {
+    requiredFields.splice(1, 0, 'interaction_date');
+  }
+  _nrmRequireFields_(data, requiredFields, 'Interaction');
 
   if (!findContactById(data.contact_id, ownerId)) {
     throw new Error('OWNER_MISMATCH: contact_id does not belong to owner_id.');
@@ -174,7 +179,7 @@ function appendInteraction(interactionData, owner_id) {
   _nrmRequireEnum_(data.platform, NRM_PLATFORMS, 'platform');
 
   data.interaction_id = data.interaction_id || generateUuid();
-  data.interaction_date = normalizeDate(data.interaction_date);
+  data.interaction_date = data.interaction_date ? normalizeDate(data.interaction_date) : '';
   data.created_at = data.created_at ? normalizeDateTime(data.created_at) : currentDateTimeUtc();
   data.schema_version = data.schema_version || NRM_SCHEMA_VERSION;
   if (data.schema_version !== NRM_SCHEMA_VERSION) {

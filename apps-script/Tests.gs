@@ -171,6 +171,19 @@ function _nrmTestPersistenceFlow_() {
 
   _nrmAssertThrows_(function () {
     appendInteraction({
+      contact_id: 'contact_a_navwar', interaction_date: '',
+      platform: 'IN_PERSON', summary: 'No implicit blank date.'
+    }, NRM_TEST_OWNER_A);
+  }, 'Interaction.interaction_date');
+  const explicitNoDate = appendInteraction({
+    contact_id: 'contact_a_navwar', interaction_date: '',
+    platform: 'IN_PERSON', summary: 'Explicitly approved without a date.',
+    source_message_sid: 'SM_STAGE1_NO_DATE'
+  }, NRM_TEST_OWNER_A, { allow_explicit_no_date: true });
+  _nrmAssert_(explicitNoDate.interaction_date === '', 'Explicit NO DATE was not stored as blank.');
+
+  _nrmAssertThrows_(function () {
+    appendInteraction({
       contact_id: 'contact_b_work', interaction_date: '2026-08-25',
       platform: 'TEXT', summary: 'Must not write.'
     }, NRM_TEST_OWNER_A);
@@ -183,7 +196,7 @@ function _nrmTestPersistenceFlow_() {
   _nrmAssert_(event.owner_id === NRM_TEST_OWNER_A, 'Event owner_id was not persisted.');
   _nrmAssert_(deleteStaging(staging.review_id, NRM_TEST_OWNER_B) === false, 'Foreign owner deleted staging.');
   _nrmAssert_(deleteStaging(staging.review_id, NRM_TEST_OWNER_A) === true, 'Owner could not delete staging.');
-  return 'PASS staging CRUD and interaction append: create/update/delete scoped; staged contact IDs owner-validated; interaction and event appended; cross-owner writes rejected.';
+  return 'PASS staging CRUD and interaction append: create/update/delete scoped; staged contact IDs owner-validated; dates required unless explicit NO DATE override; interaction and event appended; cross-owner writes rejected.';
 }
 
 function _nrmTestUtilities_() {

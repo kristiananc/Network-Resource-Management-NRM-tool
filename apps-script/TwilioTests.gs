@@ -8,6 +8,7 @@ function runStage5AppsScriptTests() {
     _nrmRunTest_('direct and tampered request rejection', _nrmTestWorkerRequestRejection_),
     _nrmRunTest_('Twilio REST request construction', _nrmTestTwilioRestRequestConstruction_),
     _nrmRunTest_('two-owner outbound SMS review loop isolation', _nrmTestWorkerTwoOwnerLoop_),
+    _nrmRunTest_('missing-date outbound prompt', _nrmTestMissingDateOutboundPrompt_),
     _nrmRunTest_('outbound failure state integrity', _nrmTestOutboundFailureStateIntegrity_),
     _nrmRunTest_('safe empty TwiML acknowledgement', _nrmTestSafeWorkerResponses_)
   ];
@@ -158,6 +159,34 @@ function _nrmTestTwilioRestRequestConstruction_() {
     'Messages request To/From/Body encoding is wrong.'
   );
   return 'PASS Twilio REST request construction: exact Messages endpoint, Basic Auth, form content type, and encoded To/From/Body.';
+}
+
+function _nrmTestMissingDateOutboundPrompt_() {
+  return _nrmWithStage5Spreadsheet_(function () {
+    const sentMessages = [];
+    NRM_TEST_TWILIO_CLIENT_ = function (message) {
+      sentMessages.push(Object.assign({}, message));
+      return { message_sid: 'SM_OUTBOUND_MISSING_DATE_' + sentMessages.length };
+    };
+    NRM_TEST_LOCAL_AI_CLIENT_ = function (path, payload) {
+      const draft = _nrmStage3DraftWithPerson_(payload.raw_body, {
+        name: 'Kris Angell', organization: 'Toastmasters', context_tag: 'Toastmasters'
+      });
+      draft.interaction_date = null;
+      return {
+        owner_id: payload.owner_id, review_id: payload.review_id,
+        schema_version: '1.0', draft: draft
+      };
+    };
+    doPost(_nrmStage5WorkerEvent_(
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_MISSING_DATE',
+      'Kris Angell recently opened a winery touring business.'
+    ));
+    _nrmAssert_(sentMessages.length === 1, 'Missing-date draft did not send one review SMS.');
+    _nrmAssert_(sentMessages[0].body.indexOf('I need a date for this.') !== -1, 'Review SMS omitted the date prompt.');
+    _nrmAssert_(sentMessages[0].body.indexOf('NO DATE') !== -1, 'Review SMS omitted the explicit NO DATE choice.');
+    return 'PASS missing-date outbound prompt: review SMS included the summary, specific date request, relative-date example, and explicit NO DATE choice.';
+  });
 }
 
 function _nrmTestOutboundFailureStateIntegrity_() {

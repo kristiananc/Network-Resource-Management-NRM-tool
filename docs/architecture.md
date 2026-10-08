@@ -64,6 +64,15 @@ created only after the user approves the staged draft. The commit path derives
 the proposal from the latest validated interaction draft again before enforcing
 required Contact fields.
 
+Draft validation happens before the user can approve and again before any
+permanent Contact or Interaction write. A missing interaction date prompts for
+a date rather than defaulting to ingestion time. The exact `NO DATE` reply is
+an explicit correction: it is recorded in control metadata inside the existing
+`draft_json`, returns to `PENDING_REVIEW`, and permits a blank stored date only
+after a subsequent `YES`. The same preflight names other correctable required
+fields, including a missing new-contact display name. This uses the frozen v1
+Staging headers and workflow-state enum without adding a column or state.
+
 The historical command-parser in `legacy/original_apps_script.gs` is a
 read-only archive and is not loaded, imported, or used by this active path.
 

@@ -9,6 +9,9 @@ function runStage3Tests() {
     _nrmRunTest_('AI person new contact guarded commit', _nrmTestNewContactCommit_),
     _nrmRunTest_('empty staged contact recovery', _nrmTestEmptyContactBundleCommit_),
     _nrmRunTest_('AI person existing contact resolution', _nrmTestExistingContactCommit_),
+    _nrmRunTest_('missing date prompt then supplied date', _nrmTestMissingDatePromptAndCorrection_),
+    _nrmRunTest_('explicit NO DATE approval', _nrmTestExplicitNoDateApproval_),
+    _nrmRunTest_('missing contact name prompt', _nrmTestMissingContactNamePrompt_),
     _nrmRunTest_('OWNER_MISMATCH hard rejection', _nrmTestOwnerMismatchCommit_),
     _nrmRunTest_('Local API owner passthrough guard', _nrmTestLocalAiOwnerMismatch_),
     _nrmRunTest_('candidate and YES parsing', _nrmTestReplyParsing_),
@@ -257,6 +260,133 @@ function _nrmTestExistingContactCommit_() {
     _nrmAssert_(interactions[0].record.contact_id === 'contact_b_work', 'Interaction linked to the wrong existing Contact.');
     _nrmAssert_(interactions[0].record.owner_id === NRM_TEST_OWNER_B, 'Existing-contact Interaction owner_id changed.');
     return 'PASS AI person existing contact resolution: matched within owner, created no duplicate Contact, and linked the Interaction to contact_b_work.';
+  });
+}
+
+function _nrmTestMissingDatePromptAndCorrection_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    NRM_TEST_LOCAL_AI_CLIENT_ = function (path, payload) {
+      if (path === '/process-interaction') {
+        const draft = _nrmStage3DraftWithPerson_(payload.raw_body, {
+          name: 'Kris Angell', organization: 'Toastmasters', context_tag: 'Toastmasters'
+        });
+        draft.interaction_date = null;
+        return {
+          owner_id: payload.owner_id, review_id: payload.review_id,
+          schema_version: '1.0', draft: draft
+        };
+      }
+      _nrmAssert_(path === '/revise-draft', 'Expected date correction through revision path.');
+      const revised = Object.assign({}, payload.draft, { interaction_date: '2026-10-03' });
+      return {
+        owner_id: payload.owner_id, review_id: payload.review_id,
+        schema_version: '1.0', draft: revised
+      };
+    };
+
+    const started = handleNormalizedEvent({
+      message_sid: 'SM3_MISSING_DATE', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000001', body: 'Kris Angell recently opened a winery touring business.'
+    });
+    _nrmAssert_(started.state === 'PENDING_REVIEW', 'Missing date should remain reviewable.');
+    _nrmAssert_(started.missing_fields.join(',') === 'interaction_date', 'Missing date was not identified at draft time.');
+    _nrmAssert_(started.message.indexOf('I need a date for this.') !== -1, 'Specific date prompt missing.');
+
+    const prematureYes = handleNormalizedEvent({
+      message_sid: 'SM3_MISSING_DATE_YES', owner_id: NRM_TEST_OWNER_A,
+      review_id: started.review_id, body: 'YES'
+    });
+    _nrmAssert_(prematureYes.state === 'PENDING_REVIEW', 'YES with missing date entered ERROR or committed.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === 2, 'Premature YES partially created a Contact.');
+    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'Premature YES wrote an Interaction.');
+
+    const revised = handleNormalizedEvent({
+      message_sid: 'SM3_DATE_CORRECTION', owner_id: NRM_TEST_OWNER_A,
+      review_id: started.review_id, body: 'It happened on October 3, 2026.'
+    });
+    _nrmAssert_(revised.state === 'PENDING_REVIEW', 'Date correction did not return to review.');
+    _nrmAssert_(revised.missing_fields.length === 0, 'Supplied date remained missing.');
+    const committed = handleNormalizedEvent({
+      message_sid: 'SM3_DATE_APPROVE', owner_id: NRM_TEST_OWNER_A,
+      review_id: started.review_id, body: 'YES'
+    });
+    _nrmAssert_(committed.state === 'COMMITTED', 'Corrected date did not commit.');
+    const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);
+    _nrmAssert_(interactions.length === 1, 'Corrected interaction missing.');
+    _nrmAssert_(interactions[0].record.interaction_date === '2026-10-03', 'Corrected date changed.');
+    const validationEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
+      return entry.record.event_type === 'VALIDATION_REQUIRED';
+    });
+    _nrmAssert_(validationEvents.length === 1, 'Missing-date YES did not log VALIDATION_REQUIRED.');
+    return 'PASS missing date prompt then supplied date: draft named interaction_date before confirmation; premature YES wrote no Contact/Interaction; date revision committed 2026-10-03.';
+  });
+}
+
+function _nrmTestExplicitNoDateApproval_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    let revisionCalls = 0;
+    NRM_TEST_LOCAL_AI_CLIENT_ = function (path, payload) {
+      if (path === '/revise-draft') revisionCalls += 1;
+      const draft = _nrmStage3DraftWithPerson_(payload.raw_body || '', {
+        name: 'No Date Person', organization: null, context_tag: null
+      });
+      draft.interaction_date = null;
+      return {
+        owner_id: payload.owner_id, review_id: payload.review_id,
+        schema_version: '1.0', draft: draft
+      };
+    };
+    const started = handleNormalizedEvent({
+      message_sid: 'SM3_NO_DATE_CAPTURE', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000001', body: 'No Date Person runs a local business.'
+    });
+    const noDate = handleNormalizedEvent({
+      message_sid: 'SM3_NO_DATE_REPLY', owner_id: NRM_TEST_OWNER_A,
+      review_id: started.review_id, body: ' no date '
+    });
+    _nrmAssert_(noDate.state === 'PENDING_REVIEW', 'NO DATE did not return to review.');
+    _nrmAssert_(noDate.missing_fields.length === 0, 'Explicit NO DATE still reported date missing.');
+    _nrmAssert_(revisionCalls === 0, 'NO DATE was sent to the model instead of handled as an explicit correction.');
+    const staged = findStagingByReviewId(started.review_id, NRM_TEST_OWNER_A);
+    const bundle = _nrmParseJsonObject_(staged.draft_json, {});
+    _nrmAssert_(bundle.review_control.no_date_confirmed === true, 'NO DATE control metadata missing.');
+    _nrmAssert_(Number(staged.revision_count) === 1, 'NO DATE did not traverse the revision state path.');
+    const committed = handleNormalizedEvent({
+      message_sid: 'SM3_NO_DATE_APPROVE', owner_id: NRM_TEST_OWNER_A,
+      review_id: started.review_id, body: 'YES'
+    });
+    _nrmAssert_(committed.state === 'COMMITTED', 'Explicit NO DATE did not commit.');
+    const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);
+    _nrmAssert_(interactions.length === 1 && interactions[0].record.interaction_date === '', 'NO DATE was not stored as blank.');
+    return 'PASS explicit NO DATE approval: command traversed REVISING, set draft_json review_control, bypassed the model, and committed one blank-date Interaction only after YES.';
+  });
+}
+
+function _nrmTestMissingContactNamePrompt_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    NRM_TEST_LOCAL_AI_CLIENT_ = function (path, payload) {
+      const draft = _nrmStage3DraftWithPerson_(payload.raw_body, {
+        name: null, organization: 'Camp Pendleton', context_tag: null
+      });
+      return {
+        owner_id: payload.owner_id, review_id: payload.review_id,
+        schema_version: '1.0', draft: draft
+      };
+    };
+    const started = handleNormalizedEvent({
+      message_sid: 'SM3_MISSING_NAME', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000001', body: 'Went to Camp Pendleton.'
+    });
+    _nrmAssert_(started.missing_fields.indexOf('contact.display_name') !== -1, 'Missing Contact name was not detected.');
+    _nrmAssert_(started.message.indexOf("I need the person's name.") !== -1, 'Specific name prompt missing.');
+    const prematureYes = handleNormalizedEvent({
+      message_sid: 'SM3_MISSING_NAME_YES', owner_id: NRM_TEST_OWNER_A,
+      review_id: started.review_id, body: 'YES'
+    });
+    _nrmAssert_(prematureYes.state === 'PENDING_REVIEW', 'Missing name entered ERROR.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === 2, 'Missing name partially wrote Contact.');
+    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'Missing name wrote Interaction.');
+    return 'PASS missing contact name prompt: unnamed capture stayed PENDING_REVIEW, named contact.display_name in plain language, and premature YES wrote nothing permanent.';
   });
 }
 

@@ -198,7 +198,9 @@ function _nrmTwilioReplyMessage_(result, ownerId) {
     const summary = bundle.interaction && bundle.interaction.summary
       ? String(bundle.interaction.summary)
       : 'Draft ready.';
-    return 'Review: ' + summary + '\nReply YES to confirm, or send a correction.';
+    return 'Review: ' + summary + '\n' + String(
+      result.message || 'Reply YES to confirm, or send a correction.'
+    );
   }
 
   if (result.state === 'COMMITTED') return 'Interaction saved.';

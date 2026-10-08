@@ -69,7 +69,7 @@ interaction_id | contact_id | owner_id | interaction_date | platform | summary |
 | `interaction_id` | string / UUID | Yes | Immutable interaction identifier. |
 | `contact_id` | string / UUID | Yes | References the Contact associated with this event. |
 | `owner_id` | string | Yes | Tenant identifier copied into the interaction row for direct owner filtering and ownership validation. |
-| `interaction_date` | date / datetime | Yes | When the interaction occurred; may differ from ingestion time. |
+| `interaction_date` | date / datetime / null | Conditional | When the interaction occurred; may differ from ingestion time. A blank value is permitted only after the user explicitly replies `NO DATE` during review. |
 | `platform` | Platform enum | Yes | Approved interaction medium. |
 | `summary` | text | Yes | Human-approved concise synopsis. |
 | `details_json` | JSON string / null | No | Optional structured details/topics for future use. |
@@ -86,6 +86,7 @@ interaction_id | contact_id | owner_id | interaction_date | platform | summary |
 - Interaction history is preserved rather than overwritten.
 - Before commit, the application must verify that the selected `contact_id` belongs to the same `owner_id` as the staged review.
 - An `OWNER_MISMATCH` condition must hard-fail rather than write an interaction.
+- A missing interaction date blocks approval and prompts for correction. The write helper continues to reject a blank date unless the approved Staging draft records the user's explicit `NO DATE` choice.
 
 ---
 

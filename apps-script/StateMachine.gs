@@ -3,6 +3,7 @@
  */
 
 const NRM_YES_REPLIES = Object.freeze(['YES', 'Y']);
+const NRM_NO_DATE_REPLY = 'NO DATE';
 
 function routeNormalizedEvent(event) {
   const normalized = _nrmNormalizeEvent_(event);
@@ -92,9 +93,7 @@ function handleProcessing_(staging, event) {
     draft_json: bundle,
     error_json: ''
   }, staging.owner_id);
-  return _nrmStateResult_(pending, {
-    message: 'Reply YES to approve or send a correction.'
-  });
+  return _nrmPendingReviewResult_(pending);
 }
 
 function handleDisambiguating_(staging, event) {
@@ -118,14 +117,12 @@ function handleDisambiguating_(staging, event) {
     selected_contact_id: ownedCandidates[candidateIndex].contact_id,
     error_json: ''
   }, staging.owner_id);
-  return _nrmStateResult_(pending, {
-    message: 'Reply YES to approve or send a correction.'
-  });
+  return _nrmPendingReviewResult_(pending);
 }
 
 function handlePendingReview_(staging, event) {
   if (isYesApproval_(event.body)) {
-    return _nrmCommitApprovedReview_(staging);
+    return _nrmCommitApprovedReview_(staging, event);
   }
 
   const revising = updateStaging(staging.review_id, {
@@ -141,15 +138,27 @@ function handleRevising_(staging, event) {
   if (!bundle.interaction) {
     throw new Error('MISSING_DRAFT: staged interaction draft is required.');
   }
-  const response = reviseDraftWithLocalAi_({
-    owner_id: staging.owner_id,
-    review_id: staging.review_id,
-    draft: bundle.interaction,
-    correction: _nrmRequireString_(event.body, 'correction')
-  });
-  bundle.interaction = response.draft;
+  if (isNoDateReply_(event.body)) {
+    bundle.interaction.interaction_date = null;
+    bundle.review_control = Object.assign({}, bundle.review_control || {}, {
+      no_date_confirmed: true
+    });
+  } else {
+    const response = reviseDraftWithLocalAi_({
+      owner_id: staging.owner_id,
+      review_id: staging.review_id,
+      draft: bundle.interaction,
+      correction: _nrmRequireString_(event.body, 'correction')
+    });
+    bundle.interaction = response.draft;
+    if (bundle.interaction.interaction_date) {
+      bundle.review_control = Object.assign({}, bundle.review_control || {}, {
+        no_date_confirmed: false
+      });
+    }
+  }
   bundle.contact = _nrmContactProposalFromDraft_(
-    response.draft,
+    bundle.interaction,
     bundle.contact || {}
   );
   const pending = updateStaging(staging.review_id, {
@@ -157,9 +166,7 @@ function handleRevising_(staging, event) {
     draft_json: bundle,
     error_json: ''
   }, staging.owner_id);
-  return _nrmStateResult_(pending, {
-    message: 'Revision ready. Reply YES to approve or send another correction.'
-  });
+  return _nrmPendingReviewResult_(pending, 'Revision ready. ');
 }
 
 function handleError_(staging) {
@@ -182,6 +189,10 @@ function parseCandidateNumber_(body, candidateCount) {
 
 function isYesApproval_(body) {
   return NRM_YES_REPLIES.indexOf(String(body || '').trim().toUpperCase()) !== -1;
+}
+
+function isNoDateReply_(body) {
+  return String(body || '').trim().toUpperCase() === NRM_NO_DATE_REPLY;
 }
 
 function _nrmStartCapture_(event) {
@@ -216,11 +227,25 @@ function _nrmDispatchState_(staging, event) {
   }
 }
 
-function _nrmCommitApprovedReview_(staging) {
+function _nrmCommitApprovedReview_(staging, event) {
   const ownerId = staging.owner_id;
   const bundle = _nrmParseJsonObject_(staging.draft_json, {});
   if (!bundle.interaction) {
     throw new Error('MISSING_DRAFT: staged interaction draft is required.');
+  }
+
+  const issues = _nrmReviewValidationIssues_(staging, bundle);
+  if (issues.length) {
+    logEvent({
+      review_id: staging.review_id,
+      event_type: 'VALIDATION_REQUIRED',
+      status: 'FAILURE',
+      details: {
+        message_sid: event && event.message_sid ? event.message_sid : '',
+        fields: issues.map(function (issue) { return issue.field; })
+      }
+    }, ownerId);
+    return _nrmPendingReviewResult_(staging);
   }
 
   let contact;
@@ -248,7 +273,11 @@ function _nrmCommitApprovedReview_(staging) {
     source_message_sid: staging.message_sid,
     ai_model: draft.ai_model,
     schema_version: draft.schema_version
-  }, ownerId);
+  }, ownerId, {
+    allow_explicit_no_date: Boolean(
+      bundle.review_control && bundle.review_control.no_date_confirmed === true
+    )
+  });
 
   logEvent({
     review_id: staging.review_id,
@@ -270,6 +299,72 @@ function _nrmCommitApprovedReview_(staging) {
     interaction_id: interaction.interaction_id,
     message: 'Interaction committed.'
   };
+}
+
+function _nrmPendingReviewResult_(staging, prefix) {
+  const bundle = _nrmParseJsonObject_(staging.draft_json, {});
+  const issues = _nrmReviewValidationIssues_(staging, bundle);
+  const instruction = issues.length
+    ? issues.map(function (issue) { return issue.prompt; }).join(' ')
+    : 'Reply YES to confirm, or send a correction.';
+  return _nrmStateResult_(staging, {
+    message: String(prefix || '') + instruction,
+    missing_fields: issues.map(function (issue) { return issue.field; })
+  });
+}
+
+function _nrmReviewValidationIssues_(staging, bundle) {
+  const interaction = bundle && bundle.interaction;
+  if (!interaction || Object.prototype.toString.call(interaction) !== '[object Object]') {
+    return [{
+      field: 'interaction',
+      prompt: 'I could not build an interaction draft. Reply CANCEL and resend the entry.'
+    }];
+  }
+
+  const issues = [];
+  const explicitNoDate = Boolean(
+    bundle.review_control && bundle.review_control.no_date_confirmed === true
+  );
+  if (!interaction.interaction_date && !explicitNoDate) {
+    issues.push({
+      field: 'interaction_date',
+      prompt: 'I need a date for this. Reply with a date (or "earlier this week", etc.), or reply NO DATE if there is not a specific one.'
+    });
+  } else if (interaction.interaction_date) {
+    try {
+      normalizeDate(interaction.interaction_date);
+    } catch (error) {
+      issues.push({
+        field: 'interaction_date',
+        prompt: 'I could not understand the interaction date. Reply with a specific date or relative date, or reply NO DATE.'
+      });
+    }
+  }
+
+  if (!interaction.platform || NRM_PLATFORMS.indexOf(interaction.platform) === -1) {
+    issues.push({
+      field: 'platform',
+      prompt: 'I need the interaction method. Reply with how you interacted, such as in person, text, call, email, or video call.'
+    });
+  }
+  if (!String(interaction.summary || '').trim()) {
+    issues.push({
+      field: 'summary',
+      prompt: 'I need a short summary. Reply with what happened.'
+    });
+  }
+
+  if (!staging.selected_contact_id) {
+    const contact = _nrmContactProposalFromDraft_(interaction, bundle.contact || {});
+    if (!String(contact.display_name || '').trim()) {
+      issues.push({
+        field: 'contact.display_name',
+        prompt: 'I need the person\'s name. Reply with their name, or reply CANCEL if this should not be saved.'
+      });
+    }
+  }
+  return issues;
 }
 
 function _nrmTransitionToError_(staging, error, critical) {
