@@ -71,7 +71,7 @@ PLATFORM_CORRECTION_CUES = re.compile(
 )
 
 SUBSTANTIVE_SUMMARY_CUES = re.compile(
-    r"\b(?:discuss(?:ed|ing)?|talk(?:ed|ing)?\s+about|covered|conversation|"
+    r"\b(?:discuss(?:ed|ing)?|talk(?:ed|ing)?\s+about|covered|"
     r"topic|mentioned|agreed|decided|planned|outcome|next steps?|follow[ -]?up|"
     r"summary|summarize|summary wording|description|rewrite)\b",
     re.IGNORECASE,
@@ -477,6 +477,15 @@ def _validate_revision_patch_scope(
         PLATFORM_ONLY_CORRECTION.fullmatch(correction)
         or DATE_ONLY_CORRECTION.fullmatch(correction)
         or NAME_SPELLING_ONLY_CORRECTION.fullmatch(correction)
+    )
+    non_summary_fields = set(changes).difference({"interaction.summary"})
+    narrow_field_only_patch = bool(non_summary_fields) and non_summary_fields.issubset(
+        {"interaction.platform", "interaction.date", "person.name"}
+    )
+    summary_must_be_preserved = summary_must_be_preserved or bool(
+        narrow_field_only_patch
+        and not substantive_correction
+        and not added_identity_context
     )
     if summary_must_be_preserved and "interaction.summary" in changes:
         violations.append(
