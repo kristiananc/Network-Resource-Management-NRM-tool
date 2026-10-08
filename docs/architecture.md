@@ -143,6 +143,13 @@ events before the HTTP error response is returned. The event identifies the
 request ID, safe error code, exception type, and pipeline stage without logging
 credentials, owner IDs, captions, media URLs, or image bytes.
 
+The revision boundary accepts only fields supported by the correction. Python,
+not the model alone, prevents platform-only, date-only, and name-spelling-only
+corrections from changing `interaction.summary`; an unsolicited summary patch
+gets one repair attempt and then fails closed. Corrections that add substantive
+topic/purpose/outcome information or necessary organization/context still
+require the summary to be refreshed.
+
 ### Local LLM/VLM
 
 - Extracts evidence into strict structured drafts.

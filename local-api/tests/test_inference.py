@@ -10,6 +10,7 @@ import httpx
 
 from app.inference import (
     InferenceError,
+    SUBSTANTIVE_SUMMARY_CUES,
     _ollama_chat,
     _ollama_vision_num_ctx,
     process_interaction,
@@ -294,6 +295,135 @@ class Stage6InferenceTests(unittest.TestCase):
         self.assertEqual(revised.raw_body, existing.raw_body)
         self.assertEqual(revised.media_refs, existing.media_refs)
 
+    def test_platform_only_correction_rejects_summary_rewrite_then_repairs(self) -> None:
+        self.assertIsNone(SUBSTANTIVE_SUMMARY_CUES.search("In person"))
+        before_summary = (
+            "president of the toastmasters club recently opened her own "
+            "winery business"
+        )
+        existing = InteractionDraft(
+            interaction_date=None,
+            platform=None,
+            summary=before_summary,
+            details_json={
+                "person": {
+                    "name": "Kris Angell",
+                    "phone": None,
+                    "email": None,
+                    "organization": None,
+                    "context_tag": "Toastmasters",
+                },
+                "identity": {
+                    "confidence": 0.9,
+                    "evidence": ["winery content retained"],
+                },
+                "warnings": [],
+            },
+            raw_body=(
+                "The president of the toastmasters club is Kris Angell. "
+                "Recently opened her own winery touring business..."
+            ),
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+        outputs = iter(
+            [
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.platform", "value": "IN_PERSON"},
+                        {
+                            "field": "interaction.summary",
+                            "value": (
+                                "president of the Toastmasters Club spoke in person"
+                            ),
+                        },
+                    ],
+                },
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.platform", "value": "IN_PERSON"}
+                    ],
+                },
+            ]
+        )
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
+
+        revised = revise_draft(
+            ReviseDraftRequest(
+                owner_id="own_live_a",
+                review_id="4059674e-c611-4ed7-a931-210e9d85bc4b",
+                draft=existing,
+                correction="In person",
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("interaction.summary is unsupported", calls[1][-1]["content"])
+        self.assertEqual(revised.platform.value, "IN_PERSON")
+        self.assertEqual(revised.summary, before_summary)
+        self.assertEqual(revised.details_json, existing.details_json)
+        self.assertEqual(revised.raw_body, existing.raw_body)
+
+    def test_date_only_correction_rejects_summary_rewrite_then_repairs(self) -> None:
+        existing = InteractionDraft(
+            interaction_date=None,
+            platform="IN_PERSON",
+            summary="Discussed opening a winery touring business.",
+            details_json={"warnings": []},
+            raw_body="Recently opened a winery touring business.",
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+        outputs = iter(
+            [
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.date", "value": "2026-10-03"},
+                        {
+                            "field": "interaction.summary",
+                            "value": "Discussed the winery business on October 3.",
+                        },
+                    ],
+                },
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.date", "value": "2026-10-03"}
+                    ],
+                },
+            ]
+        )
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
+
+        revised = revise_draft(
+            ReviseDraftRequest(
+                owner_id="own_revision_date_only",
+                review_id="review-date-only",
+                draft=existing,
+                correction="October 3, 2026",
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(revised.interaction_date, date(2026, 10, 3))
+        self.assertEqual(revised.summary, existing.summary)
+        self.assertEqual(revised.platform, existing.platform)
+
     def test_revision_added_identity_and_topic_requires_summary_refresh(self) -> None:
         existing = InteractionDraft(
             interaction_date=date(2026, 9, 20),
@@ -418,15 +548,31 @@ class Stage6InferenceTests(unittest.TestCase):
             schema_version="1.0",
         )
 
-        def chat(_messages, _schema):
-            return json.dumps(
+        outputs = iter(
+            [
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "person.name", "value": "Maia Patel"},
+                        {
+                            "field": "interaction.summary",
+                            "value": "Discussed a pilot with Maia Patel.",
+                        },
+                    ],
+                },
                 {
                     "schema_version": "1.0",
                     "changes": [
                         {"field": "person.name", "value": "Maia Patel"}
                     ],
-                }
-            )
+                },
+            ]
+        )
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
 
         revised = revise_draft(
             ReviseDraftRequest(
@@ -438,6 +584,8 @@ class Stage6InferenceTests(unittest.TestCase):
             chat=chat,
         )
 
+        self.assertEqual(len(calls), 2)
+        self.assertIn("interaction.summary is unsupported", calls[1][-1]["content"])
         self.assertEqual(revised.details_json["person"]["name"], "Maia Patel")
         self.assertEqual(revised.summary, existing.summary)
         self.assertEqual(revised.interaction_date, existing.interaction_date)

@@ -238,12 +238,16 @@ PYTHONPATH=local-api python3 -m unittest discover -s local-api/tests -v
 The revision path additionally enforces semantic scope after schema validation:
 a new organization/context or substantive topic requires a refreshed summary,
 while date and platform changes require supporting cues in the correction. A
-violating model patch receives the same single repair attempt as malformed or
-schema-invalid output; a second violation fails instead of being merged.
+platform-only, date-only, or name-spelling-only correction is forbidden from
+changing `interaction.summary`; explicit summary wording or substantive topic,
+purpose, outcome, commitment, next-step, or organization/context changes may
+refresh it. A violating model patch receives the same single repair attempt as
+malformed or schema-invalid output; a second violation fails instead of being
+merged.
 
 Run the deterministic revision regression to print complete before/after draft
-JSON for the substantive-summary, typo-preservation, and unsupported-field
-cases:
+JSON for the exact Kris Angell platform-only case, date-only and name-spelling
+preservation, substantive-summary refresh, and unsupported-field repair cases:
 
 ```shell
 PYTHONPATH=local-api python3 local-api/scripts/run_revision_regression.py

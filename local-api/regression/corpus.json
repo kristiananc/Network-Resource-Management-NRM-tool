@@ -74,26 +74,26 @@
       "id": "correction_platform_only",
       "type": "revise",
       "owner_id": "own_corpus_a",
-      "correction": "It was a video call, not a phone call.",
+      "correction": "In person",
       "draft": {
-        "interaction_date": "2026-09-20",
-        "platform": "CALL",
-        "summary": "Spoke with Maya Patel about the warehouse automation pilot.",
+        "interaction_date": null,
+        "platform": null,
+        "summary": "president of the toastmasters club recently opened her own winery business",
         "details_json": {
           "person": {
-            "name": "Maya Patel",
+            "name": "Kris Angell",
             "phone": null,
             "email": null,
-            "organization": "Acme Robotics",
-            "context_tag": "Robotics"
+            "organization": null,
+            "context_tag": "Toastmasters"
           },
           "identity": {
             "confidence": 0.9,
-            "evidence": ["full name and organization supplied"]
+            "evidence": ["winery content retained"]
           },
           "warnings": []
         },
-        "raw_body": "Called Maya Patel about the warehouse automation pilot.",
+        "raw_body": "The president of the toastmasters club is Kris Angell. Recently opened her own winery touring business...",
         "media_refs": [],
         "ai_model": "llama3.1:8b",
         "schema_version": "1.0"
@@ -101,11 +101,11 @@
       "expected": {
         "exact": {
           "schema_version": "1.0",
-          "person.name": "Maya Patel",
-          "person.organization": "Acme Robotics",
-          "interaction.date": "2026-09-20",
-          "interaction.platform": "VIDEO_CALL",
-          "interaction.summary": "Spoke with Maya Patel about the warehouse automation pilot."
+          "person.name": "Kris Angell",
+          "person.organization": null,
+          "interaction.date": null,
+          "interaction.platform": "IN_PERSON",
+          "interaction.summary": "president of the toastmasters club recently opened her own winery business"
         },
         "warnings_exact": []
       }

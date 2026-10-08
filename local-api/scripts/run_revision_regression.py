@@ -49,6 +49,38 @@ def base_draft(*, unidentified: bool = False) -> InteractionDraft:
     )
 
 
+def kris_angell_draft() -> InteractionDraft:
+    return InteractionDraft(
+        interaction_date=None,
+        platform=None,
+        summary=(
+            "president of the toastmasters club recently opened her own "
+            "winery business"
+        ),
+        details_json={
+            "person": {
+                "name": "Kris Angell",
+                "phone": None,
+                "email": None,
+                "organization": None,
+                "context_tag": "Toastmasters",
+            },
+            "identity": {
+                "confidence": 0.9,
+                "evidence": ["winery content retained"],
+            },
+            "warnings": [],
+        },
+        raw_body=(
+            "The president of the toastmasters club is Kris Angell. Recently "
+            "opened her own winery touring business..."
+        ),
+        media_refs=[],
+        ai_model="llama3.1:8b",
+        schema_version="1.0",
+    )
+
+
 def run_case(
     *,
     case_id: str,
@@ -98,6 +130,70 @@ def main() -> int:
         "Discussed a warehouse automation pilot and data-integration constraints."
     )
     results = [
+        run_case(
+            case_id="platform_only_kris_angell",
+            existing=kris_angell_draft(),
+            correction="In person",
+            outputs=[
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.platform", "value": "IN_PERSON"},
+                        {
+                            "field": "interaction.summary",
+                            "value": (
+                                "president of the Toastmasters Club spoke in person"
+                            ),
+                        },
+                    ],
+                },
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.platform", "value": "IN_PERSON"}
+                    ],
+                },
+            ],
+            verify=lambda draft: (
+                _assert_equal(draft.platform.value, "IN_PERSON"),
+                _assert_equal(
+                    draft.summary,
+                    "president of the toastmasters club recently opened her own winery business",
+                ),
+                _assert_equal(draft.interaction_date, None),
+            ),
+        ),
+        run_case(
+            case_id="date_only",
+            existing=kris_angell_draft(),
+            correction="October 3, 2026",
+            outputs=[
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.date", "value": "2026-10-03"},
+                        {
+                            "field": "interaction.summary",
+                            "value": "Discussed the winery business on October 3.",
+                        },
+                    ],
+                },
+                {
+                    "schema_version": "1.0",
+                    "changes": [
+                        {"field": "interaction.date", "value": "2026-10-03"}
+                    ],
+                },
+            ],
+            verify=lambda draft: (
+                _assert_equal(draft.interaction_date, date(2026, 10, 3)),
+                _assert_equal(draft.platform, None),
+                _assert_equal(
+                    draft.summary,
+                    "president of the toastmasters club recently opened her own winery business",
+                ),
+            ),
+        ),
         run_case(
             case_id="substantive_identity_and_topic",
             existing=base_draft(unidentified=True),
@@ -173,9 +269,19 @@ def main() -> int:
                 {
                     "schema_version": "1.0",
                     "changes": [
+                        {"field": "person.name", "value": "Maia Patel"},
+                        {
+                            "field": "interaction.summary",
+                            "value": "Discussed a pilot with Maia Patel.",
+                        },
+                    ],
+                },
+                {
+                    "schema_version": "1.0",
+                    "changes": [
                         {"field": "person.name", "value": "Maia Patel"}
                     ],
-                }
+                },
             ],
             verify=lambda draft: (
                 _assert_equal(draft.details_json["person"]["name"], "Maia Patel"),

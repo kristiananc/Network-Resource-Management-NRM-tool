@@ -72,7 +72,40 @@ PLATFORM_CORRECTION_CUES = re.compile(
 
 SUBSTANTIVE_SUMMARY_CUES = re.compile(
     r"\b(?:discuss(?:ed|ing)?|talk(?:ed|ing)?\s+about|covered|conversation|"
-    r"topic|mentioned|agreed|decided|planned|outcome|next steps?|follow[ -]?up)\b",
+    r"topic|mentioned|agreed|decided|planned|outcome|next steps?|follow[ -]?up|"
+    r"summary|summarize|summary wording|description|rewrite)\b",
+    re.IGNORECASE,
+)
+
+PLATFORM_ONLY_CORRECTION = re.compile(
+    r"^\s*(?:(?:it|this|that|the interaction|the platform)\s+(?:was|is)\s+|"
+    r"we\s+(?:met|spoke|talked)\s+)?(?:an?\s+)?(?:in[ -]person|"
+    r"face[ -]to[ -]face|call|phone call|telephone call|video call|zoom|"
+    r"google meet|facetime|microsoft teams|teams call|text|text message|sms|"
+    r"email|linkedin|instagram|event)(?:\s+(?:meeting|interaction|conversation))?"
+    r"(?:\s*,?\s+not\s+(?:an?\s+)?(?:"
+    r"in[ -]person|face[ -]to[ -]face|call|phone call|telephone call|"
+    r"video call|zoom|google meet|facetime|microsoft teams|teams call|text|"
+    r"text message|sms|email|linkedin|instagram|event))?\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+DATE_ONLY_CORRECTION = re.compile(
+    r"^\s*(?:(?:it|the interaction|the date|the interaction date)\s+"
+    r"(?:was|is)\s+|on\s+)?(?:today|yesterday|tomorrow|tonight|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"(?:january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?|"
+    r"\d{4}-\d{1,2}-\d{1,2}|\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?)"
+    r"\s*[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+NAME_SPELLING_ONLY_CORRECTION = re.compile(
+    r"^\s*(?:(?:her|his|their|the person's?)\s+name\s+(?:is|was)\s+.+?"
+    r"\s*,?\s*(?:not|instead of)\s+.+|(?:her|his|their|the person's?)\s+"
+    r"name\s+is\s+spelled\s+.+|(?:the\s+)?correct\s+(?:name|spelling)\s+"
+    r"(?:is|was)\s+.+)\s*[.!]?\s*$",
     re.IGNORECASE,
 )
 
@@ -181,6 +214,10 @@ Relevance rules:
 - Preserve interaction.summary for a spelling-only identity correction or a
   phone/email correction that does not change the interaction substance. Do
   not repeat the person's name in the summary because person.name stores it.
+- A platform-only correction, date-only correction, or name-spelling-only
+  correction MUST NOT include interaction.summary in the patch. For example,
+  "In person" must produce exactly one interaction.platform change and must
+  preserve the existing summary byte-for-byte.
 - Change interaction.date only when the correction explicitly supplies,
   removes, or corrects a date or relative-date expression.
 - Change interaction.platform only when the correction explicitly supplies,
@@ -436,7 +473,17 @@ def _validate_revision_patch_scope(
         and existing.person.context_tag is None
     )
     substantive_correction = bool(SUBSTANTIVE_SUMMARY_CUES.search(correction))
-    if added_identity_context or substantive_correction:
+    summary_must_be_preserved = bool(
+        PLATFORM_ONLY_CORRECTION.fullmatch(correction)
+        or DATE_ONLY_CORRECTION.fullmatch(correction)
+        or NAME_SPELLING_ONLY_CORRECTION.fullmatch(correction)
+    )
+    if summary_must_be_preserved and "interaction.summary" in changes:
+        violations.append(
+            "interaction.summary is unsupported because the correction changes "
+            "only platform, date, or name spelling"
+        )
+    elif added_identity_context or substantive_correction:
         proposed_summary = changes.get("interaction.summary")
         if (
             proposed_summary is None
