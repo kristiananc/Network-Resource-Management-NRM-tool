@@ -6,6 +6,8 @@ const vm = require('vm');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
+const TEST_SCRIPT_TIME_ZONE = 'America/Los_Angeles';
+
 class MockRange {
   constructor(sheet, row, column, rowCount, columnCount) {
     this.sheet = sheet;
@@ -110,6 +112,21 @@ class MockSheet {
 }
 
 function coerceLikeGoogleSheet(value, numberFormat) {
+  // Google Sheets returns date-formatted YYYY-MM-DD values from getValues()
+  // as Date objects. Use noon UTC so formatting in the test script's Pacific
+  // time zone preserves the intended calendar date across DST transitions.
+  if (numberFormat !== '@' && typeof value === 'string') {
+    const dateMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateMatch) {
+      return new Date(Date.UTC(
+        Number(dateMatch[1]),
+        Number(dateMatch[2]) - 1,
+        Number(dateMatch[3]),
+        12
+      ));
+    }
+  }
+
   // Google Sheets can persist an unformatted E.164-looking cell as a number,
   // dropping the leading plus. Model that boundary instead of retaining every
   // JavaScript string verbatim as the previous permissive shim did.
@@ -163,9 +180,29 @@ global.Utilities = {
     Array.from(crypto.createHmac('sha256', secret).update(message, 'utf8').digest()),
   base64Encode: (value) => Buffer.from(String(value), 'utf8').toString('base64'),
   base64Decode: (value) => Array.from(Buffer.from(String(value), 'base64')),
+  formatDate: (value, timeZone, pattern) => {
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+      throw new Error('Utilities.formatDate expected a valid Date.');
+    }
+    if (pattern !== 'yyyy-MM-dd') {
+      throw new Error(`Unsupported Utilities.formatDate pattern in test shim: ${pattern}`);
+    }
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(value);
+    const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${values.year}-${values.month}-${values.day}`;
+  },
   newBlob: (bytes) => ({
     getDataAsString: () => Buffer.from(bytes).toString('utf8')
   })
+};
+
+global.Session = {
+  getScriptTimeZone: () => TEST_SCRIPT_TIME_ZONE
 };
 
 global.Logger = {

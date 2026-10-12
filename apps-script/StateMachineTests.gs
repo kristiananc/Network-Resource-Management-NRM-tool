@@ -316,7 +316,16 @@ function _nrmTestMissingDatePromptAndCorrection_() {
     _nrmAssert_(committed.state === 'COMMITTED', 'Corrected date did not commit.');
     const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);
     _nrmAssert_(interactions.length === 1, 'Corrected interaction missing.');
-    _nrmAssert_(interactions[0].record.interaction_date === '2026-10-03', 'Corrected date changed.');
+    const committedDate = interactions[0].record.interaction_date;
+    _nrmAssert_(committedDate instanceof Date, 'Corrected date was not read from Sheets as a Date.');
+    _nrmAssert_(
+      Utilities.formatDate(
+        committedDate,
+        Session.getScriptTimeZone(),
+        'yyyy-MM-dd'
+      ) === '2026-10-03',
+      'Corrected date changed.'
+    );
     const validationEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
       return entry.record.event_type === 'VALIDATION_REQUIRED';
     });
