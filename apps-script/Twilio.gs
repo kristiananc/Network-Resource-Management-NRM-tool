@@ -162,6 +162,8 @@ function _nrmTwilioReplyMessage_(result, ownerId) {
     throw new Error('OWNER_MISMATCH: state-machine result changed owner_id.');
   }
   if (result.duplicate || result.state === 'DUPLICATE') return '';
+  if (result.state === 'IGNORED_TWILIO_KEYWORD') return '';
+  _nrmAssertTwilioSafePrompt_(result.message || '');
 
   if (result.state === 'DISAMBIGUATING') {
     const candidates = Array.isArray(result.candidates) ? result.candidates : [];
@@ -180,7 +182,7 @@ function _nrmTwilioReplyMessage_(result, ownerId) {
       ? String(bundle.interaction.summary)
       : 'Draft ready.';
     return 'Review: ' + summary + '\n' + String(
-      result.message || 'Reply YES to confirm, or send a correction.'
+      result.message || 'Reply CONFIRM to save, or send a correction.'
     );
   }
 
@@ -190,6 +192,17 @@ function _nrmTwilioReplyMessage_(result, ownerId) {
   }
   if (result.state === 'ERROR') return String(result.message || 'Processing failed.');
   return String(result.message || 'Message received.');
+}
+
+function _nrmAssertTwilioSafePrompt_(prompt) {
+  const normalized = String(prompt || '').toUpperCase();
+  const collision = NRM_TWILIO_RESERVED_KEYWORDS.find(function (keyword) {
+    return new RegExp('\\b' + keyword + '\\b').test(normalized);
+  });
+  if (collision) {
+    throw new Error('RESERVED_TWILIO_KEYWORD_IN_PROMPT: ' + collision);
+  }
+  return true;
 }
 
 function _nrmSendTwilioReplySafely_(body, fromNumber, toNumber, result, ownerId) {

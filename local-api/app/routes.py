@@ -65,11 +65,15 @@ def revise_draft(
 
 
 def _raise_inference_error(error: InferenceError, *, http_request: Request) -> None:
-    status_code = (
-        status.HTTP_503_SERVICE_UNAVAILABLE
-        if error.code in {"LOCAL_API_UNAVAILABLE", "MEDIA_CONFIG_ERROR"}
-        else status.HTTP_502_BAD_GATEWAY
-    )
+    if error.code in {"LOCAL_API_UNAVAILABLE", "MEDIA_CONFIG_ERROR"}:
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    elif error.code in {
+        "RESERVED_MESSAGING_KEYWORD",
+        "INSUFFICIENT_CAPTURE_CONTENT",
+    }:
+        status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+    else:
+        status_code = status.HTTP_502_BAD_GATEWAY
     LOGGER.error(
         json.dumps(
             {

@@ -69,9 +69,21 @@ permanent Contact or Interaction write. A missing interaction date prompts for
 a date rather than defaulting to ingestion time. The exact `NO DATE` reply is
 an explicit correction: it is recorded in control metadata inside the existing
 `draft_json`, returns to `PENDING_REVIEW`, and permits a blank stored date only
-after a subsequent `YES`. The same preflight names other correctable required
+after a subsequent `CONFIRM`. The same preflight names other correctable required
 fields, including a missing new-contact display name. This uses the frozen v1
 Staging headers and workflow-state enum without adding a column or state.
+
+Before Staging creation, text-only captures pass a deterministic ingress guard.
+Exact Twilio carrier keywords (`STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`,
+`END`, `QUIT`, `REVOKE`, `OPTOUT`, `START`, `UNSTOP`, `YES`, `HELP`, and
+`INFO`) are audit-logged as `TWILIO_KEYWORD_IGNORED`, receive no second NRM
+reply, create no Staging row, and never call Local AI. Blank, one-word, and
+otherwise content-free short messages are logged as
+`MESSAGE_REJECTED_INSUFFICIENT_CONTENT` and receive a request for a person/topic
+and what happened. Image-bearing messages remain valid without a caption.
+Twilio documents the current default and reserved keyword behavior in its
+[Advanced Opt-Out guide](https://www.twilio.com/docs/messaging/tutorials/advanced-opt-out)
+and [SMS STOP filtering reference](https://help.twilio.com/articles/223134027).
 
 Only one Staging review may be open for a sender/owner pair. Open-review lookup
 runs inside the state-machine lock so a webhook cannot make a stale routing
@@ -80,15 +92,24 @@ one second; a message arriving during `PROCESSING`/`REVISING` is not treated as
 a new capture and is logged as `MESSAGE_REJECTED_OPEN_REVIEW` with only its
 MessageSid, existing review ID, and state. Invalid `DISAMBIGUATING` input and
 messages received in `ERROR` are rejected and logged the same way. A
-`PENDING_REVIEW` reply remains intentionally interpretable as either `YES` or
+`PENDING_REVIEW` reply remains intentionally interpretable as either `CONFIRM` or
 a free-form correction; concurrent-review queuing and semantic classification
 of a second capture are out of scope.
 
-The exact `CANCEL` command deletes only the sender's owner-scoped Staging row,
-logs `CANCELLED`, and never changes Contacts or Interactions. `CANCEL` and
+The exact `DISCARD` command deletes only the sender's owner-scoped Staging row,
+logs the existing `CANCELLED` audit event, and never changes Contacts or
+Interactions. `DISCARD` and
 `NO DATE` with no open review return harmless guidance and cannot start a new
 capture. No new Staging column or workflow state is used; `CANCELLED`,
 `NO_OPEN_REVIEW`, and `BUSY` are transient response states only.
+
+`CANCEL` is deliberately not retained as a hidden alias: Twilio processes it as
+an opt-out before NRM can reply, so accepting it would recreate the live
+unsubscribe collision. Approval uses `CONFIRM` (with `Y` retained as a safe
+short alias); Twilio-reserved `YES` is ignored rather than treated as approval.
+`NO DATE`, `CONFIRM`, `Y`, and `DISCARD` do not collide with Twilio's documented
+keyword set. Outbound state-machine prompts are checked against the same set
+before sending.
 
 The historical command-parser in `legacy/original_apps_script.gs` is a
 read-only archive and is not loaded, imported, or used by this active path.

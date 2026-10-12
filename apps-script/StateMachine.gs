@@ -2,9 +2,16 @@
  * Owner-scoped Stage 3 workflow state machine.
  */
 
-const NRM_YES_REPLIES = Object.freeze(['YES', 'Y']);
+const NRM_APPROVAL_REPLIES = Object.freeze(['CONFIRM', 'Y']);
 const NRM_NO_DATE_REPLY = 'NO DATE';
-const NRM_CANCEL_REPLY = 'CANCEL';
+const NRM_DISCARD_REPLY = 'DISCARD';
+const NRM_TWILIO_RESERVED_KEYWORDS = Object.freeze([
+  'STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT', 'REVOKE',
+  'OPTOUT', 'START', 'UNSTOP', 'YES', 'HELP', 'INFO'
+]);
+const NRM_USER_FACING_COMMANDS = Object.freeze([
+  'CONFIRM', 'Y', NRM_NO_DATE_REPLY, NRM_DISCARD_REPLY
+]);
 
 function routeNormalizedEvent(event) {
   const normalized = _nrmNormalizeEvent_(event);
@@ -18,6 +25,10 @@ function routeNormalizedEvent(event) {
     };
   }
 
+  if (isTwilioReservedKeyword_(normalized.body)) {
+    return _nrmIgnoreTwilioKeyword_(normalized);
+  }
+
   if (!normalized.review_id) {
     const openReview = _nrmFindOpenReviewForSender_(
       normalized.owner_number,
@@ -25,8 +36,10 @@ function routeNormalizedEvent(event) {
     );
     if (openReview) {
       normalized.review_id = openReview.review_id;
-    } else if (isCancelReply_(normalized.body) || isNoDateReply_(normalized.body)) {
+    } else if (isDiscardReply_(normalized.body) || isNoDateReply_(normalized.body)) {
       return _nrmHandleCommandWithoutOpenReview_(normalized);
+    } else if (!_nrmHasSufficientCaptureContent_(normalized)) {
+      return _nrmRejectInsufficientCapture_(normalized);
     } else {
       return _nrmStartCapture_(normalized);
     }
@@ -49,9 +62,9 @@ function routeNormalizedEvent(event) {
     };
   }
 
-  if (isCancelReply_(normalized.body)) {
+  if (isDiscardReply_(normalized.body)) {
     _nrmLogMessageAccepted_(normalized, staging.review_id);
-    return _nrmCancelOpenReview_(staging, normalized);
+    return _nrmDiscardOpenReview_(staging, normalized);
   }
   return _nrmDispatchState_(staging, normalized);
 }
@@ -128,7 +141,7 @@ function handleDisambiguating_(staging, event) {
       staging,
       event,
       'This review is waiting for a contact choice. Reply with 1-' +
-        ownedCandidates.length + ', or reply CANCEL to discard it.'
+        ownedCandidates.length + ', or reply DISCARD to discard it.'
     );
   }
 
@@ -143,7 +156,7 @@ function handleDisambiguating_(staging, event) {
 
 function handlePendingReview_(staging, event) {
   _nrmLogMessageAccepted_(event, staging.review_id);
-  if (isYesApproval_(event.body)) {
+  if (isApprovalReply_(event.body)) {
     return _nrmCommitApprovedReview_(staging, event);
   }
 
@@ -207,16 +220,22 @@ function parseCandidateNumber_(body, candidateCount) {
   return oneBased - 1;
 }
 
-function isYesApproval_(body) {
-  return NRM_YES_REPLIES.indexOf(String(body || '').trim().toUpperCase()) !== -1;
+function isApprovalReply_(body) {
+  return NRM_APPROVAL_REPLIES.indexOf(String(body || '').trim().toUpperCase()) !== -1;
 }
 
 function isNoDateReply_(body) {
   return String(body || '').trim().toUpperCase() === NRM_NO_DATE_REPLY;
 }
 
-function isCancelReply_(body) {
-  return String(body || '').trim().toUpperCase() === NRM_CANCEL_REPLY;
+function isDiscardReply_(body) {
+  return String(body || '').trim().toUpperCase() === NRM_DISCARD_REPLY;
+}
+
+function isTwilioReservedKeyword_(body) {
+  return NRM_TWILIO_RESERVED_KEYWORDS.indexOf(
+    String(body || '').trim().toUpperCase()
+  ) !== -1;
 }
 
 function _nrmStartCapture_(event) {
@@ -330,14 +349,14 @@ function _nrmPendingReviewResult_(staging, prefix) {
   const issues = _nrmReviewValidationIssues_(staging, bundle);
   const instruction = issues.length
     ? issues.map(function (issue) { return issue.prompt; }).join(' ')
-    : 'Reply YES to confirm, or send a correction. To log something else, reply CANCEL to discard this review, then resend.';
+    : 'Reply CONFIRM to save, or send a correction. To log something else, reply DISCARD to discard this review, then resend.';
   return _nrmStateResult_(staging, {
     message: String(prefix || '') + instruction,
     missing_fields: issues.map(function (issue) { return issue.field; })
   });
 }
 
-function _nrmCancelOpenReview_(staging, event) {
+function _nrmDiscardOpenReview_(staging, event) {
   const ownerId = staging.owner_id;
   const details = {
     message_sid: event.message_sid,
@@ -358,12 +377,12 @@ function _nrmCancelOpenReview_(staging, event) {
     review_id: staging.review_id,
     state: 'CANCELLED',
     duplicate: false,
-    message: 'Previous review cancelled. You can send a new entry now.'
+    message: 'Previous review discarded. You can send a new entry now.'
   };
 }
 
 function _nrmHandleCommandWithoutOpenReview_(event) {
-  const command = isCancelReply_(event.body) ? 'CANCEL' : 'NO_DATE';
+  const command = isDiscardReply_(event.body) ? 'DISCARD' : 'NO_DATE';
   logEvent({
     event_type: 'COMMAND_REJECTED_NO_OPEN_REVIEW',
     status: 'FAILURE',
@@ -378,9 +397,77 @@ function _nrmHandleCommandWithoutOpenReview_(event) {
     review_id: '',
     state: 'NO_OPEN_REVIEW',
     duplicate: false,
-    message: command === 'CANCEL'
-      ? 'There is no open review to cancel. Send a new entry when you are ready.'
+    message: command === 'DISCARD'
+      ? 'There is no open review to discard. Send a new entry when you are ready.'
       : 'There is no open review waiting for a date. Send a new entry first.'
+  };
+}
+
+function _nrmIgnoreTwilioKeyword_(event) {
+  const keyword = String(event.body || '').trim().toUpperCase();
+  logEvent({
+    event_type: 'TWILIO_KEYWORD_IGNORED',
+    status: 'SUCCESS',
+    details: {
+      message_sid: event.message_sid,
+      keyword: keyword,
+      state: 'NONE'
+    }
+  }, event.owner_id);
+  return {
+    owner_id: event.owner_id,
+    review_id: '',
+    state: 'IGNORED_TWILIO_KEYWORD',
+    duplicate: false,
+    message: ''
+  };
+}
+
+function _nrmHasSufficientCaptureContent_(event) {
+  if (_nrmParseJsonArray_(event.media_refs).length) return true;
+  const words = String(event.body || '').match(/[A-Za-z0-9][A-Za-z0-9'’-]*/g) || [];
+  if (words.length >= 3) return true;
+  if (words.length < 2) return false;
+
+  const normalizedWords = words.map(function (word) { return word.toUpperCase(); });
+  const interactionCues = [
+    'MET', 'MEET', 'MEETING', 'SAW', 'CALLED', 'CALL', 'PHONED', 'TEXTED', 'EMAILED',
+    'SPOKE', 'TALKED', 'COFFEE', 'LUNCH', 'DINNER', 'ZOOM'
+  ];
+  const genericWords = [
+    'A', 'AN', 'THE', 'THIS', 'THAT', 'IT', 'WITH', 'TO', 'AT', 'IN', 'ON',
+    'PERSON', 'SOMEONE', 'SOMETHING', 'MESSAGE', 'TEST', 'HELLO', 'HI',
+    'THANKS', 'THANK', 'OK', 'OKAY'
+  ];
+  const hasInteractionCue = normalizedWords.some(function (word) {
+    return interactionCues.indexOf(word) !== -1;
+  });
+  const hasSpecificSubject = normalizedWords.some(function (word) {
+    return interactionCues.indexOf(word) === -1 && genericWords.indexOf(word) === -1;
+  });
+  const specificWordCount = normalizedWords.filter(function (word) {
+    return genericWords.indexOf(word) === -1;
+  }).length;
+  return specificWordCount >= 2 || (hasInteractionCue && hasSpecificSubject);
+}
+
+function _nrmRejectInsufficientCapture_(event) {
+  const wordCount = (String(event.body || '').match(/[A-Za-z0-9][A-Za-z0-9'’-]*/g) || []).length;
+  logEvent({
+    event_type: 'MESSAGE_REJECTED_INSUFFICIENT_CONTENT',
+    status: 'RETRY',
+    details: {
+      message_sid: event.message_sid,
+      word_count: wordCount,
+      state: 'NONE'
+    }
+  }, event.owner_id);
+  return {
+    owner_id: event.owner_id,
+    review_id: '',
+    state: 'NEEDS_MORE_DETAIL',
+    duplicate: false,
+    message: 'Please resend with the person\'s name and what happened.'
   };
 }
 
@@ -405,15 +492,15 @@ function _nrmOpenReviewInstruction_(state) {
     return 'Still working on your previous entry. Please resend this message in a minute.';
   }
   if (state === 'PENDING_REVIEW') {
-    return 'Finish your open review first: reply YES or send a correction, or reply CANCEL to discard it. Then resend this message.';
+    return 'Finish your open review first: reply CONFIRM or send a correction, or reply DISCARD to discard it. Then resend this message.';
   }
   if (state === 'ERROR') {
-    return 'Your previous entry failed. Reply CANCEL to clear it, then resend your entry.';
+    return 'Your previous entry failed. Reply DISCARD to clear it, then resend your entry.';
   }
   if (state === 'DISAMBIGUATING') {
-    return 'Finish choosing a contact for your open review, or reply CANCEL to discard it.';
+    return 'Finish choosing a contact for your open review, or reply DISCARD to discard it.';
   }
-  return 'Finish or cancel your open review, then resend this message.';
+  return 'Finish or discard your open review, then resend this message.';
 }
 
 function _nrmFindOpenReviewForSender_(fromNumber, ownerId) {
@@ -438,7 +525,7 @@ function _nrmReviewValidationIssues_(staging, bundle) {
   if (!interaction || Object.prototype.toString.call(interaction) !== '[object Object]') {
     return [{
       field: 'interaction',
-      prompt: 'I could not build an interaction draft. Reply CANCEL and resend the entry.'
+      prompt: 'I could not build an interaction draft. Reply DISCARD and resend the entry.'
     }];
   }
 
@@ -480,7 +567,7 @@ function _nrmReviewValidationIssues_(staging, bundle) {
     if (!String(contact.display_name || '').trim()) {
       issues.push({
         field: 'contact.display_name',
-        prompt: 'I need the person\'s name. Reply with their name, or reply CANCEL if this should not be saved.'
+        prompt: 'I need the person\'s name. Reply with their name, or reply DISCARD if this should not be saved.'
       });
     }
   }

@@ -28,7 +28,7 @@ class Stage6ApiTests(unittest.TestCase):
             "app.inference._ollama_chat",
             side_effect=self._mock_ollama_chat,
         )
-        self.ollama.start()
+        self.ollama_mock = self.ollama.start()
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
@@ -96,7 +96,7 @@ class Stage6ApiTests(unittest.TestCase):
             json={
                 "owner_id": owner_id,
                 "review_id": "review_process_001",
-                "raw_body": "Met Sarah for coffee.",
+                "raw_body": "Met Sarah Chen from NAVWAR for coffee.",
                 "media_refs": [],
             },
         )
@@ -125,7 +125,7 @@ class Stage6ApiTests(unittest.TestCase):
                         },
                         "warnings": [],
                     },
-                    "raw_body": "Met Sarah for coffee.",
+                    "raw_body": "Met Sarah Chen from NAVWAR for coffee.",
                     "media_refs": [],
                     "ai_model": "llama3.1:8b",
                     "schema_version": "1.0",
@@ -138,7 +138,7 @@ class Stage6ApiTests(unittest.TestCase):
             json={
                 "owner_id": owner_id,
                 "review_id": "review_process_001",
-                "raw_body": "Met Sarah for coffee.",
+                "raw_body": "Met Sarah Chen from NAVWAR for coffee.",
                 "media_refs": [],
             },
         )
@@ -229,7 +229,7 @@ class Stage6ApiTests(unittest.TestCase):
         request_body = {
             "owner_id": "own_error_test",
             "review_id": "review_error_test",
-            "raw_body": "Met someone.",
+            "raw_body": "Met someone and discussed a project update.",
         }
         cases = [
             ("LOCAL_API_UNAVAILABLE", 503),
@@ -257,6 +257,37 @@ class Stage6ApiTests(unittest.TestCase):
                         }
                     },
                 )
+
+    def test_reserved_keyword_and_content_free_requests_return_422_without_ollama(self) -> None:
+        calls_before = self.ollama_mock.call_count
+        expected = {
+            "START": (
+                "RESERVED_MESSAGING_KEYWORD",
+                "Carrier messaging keyword is not an NRM interaction capture.",
+            ),
+            "Hello": (
+                "INSUFFICIENT_CAPTURE_CONTENT",
+                "Capture needs a person or topic plus what happened.",
+            ),
+        }
+        for index, (raw_body, (code, message)) in enumerate(expected.items()):
+            with self.subTest(raw_body=raw_body):
+                response = self.client.post(
+                    "/process-interaction",
+                    headers=AUTH,
+                    json={
+                        "owner_id": "own_ingress_guard",
+                        "review_id": f"review-ingress-{index}",
+                        "raw_body": raw_body,
+                        "media_refs": [],
+                    },
+                )
+                self.assertEqual(response.status_code, 422)
+                self.assertEqual(
+                    response.json(),
+                    {"detail": {"code": code, "message": message}},
+                )
+        self.assertEqual(self.ollama_mock.call_count, calls_before)
 
     def test_missing_local_media_credentials_return_503(self) -> None:
         media_url = (
@@ -364,7 +395,10 @@ class Stage6ApiTests(unittest.TestCase):
                 json={
                     "owner_id": "own_log_test",
                     "review_id": "review_log_test",
-                    "raw_body": "sensitive body must not be logged",
+                    "raw_body": (
+                        "Met Sarah Chen from NAVWAR for coffee; sensitive body "
+                        "must not be logged"
+                    ),
                 },
             )
         self.assertEqual(response.status_code, 200)

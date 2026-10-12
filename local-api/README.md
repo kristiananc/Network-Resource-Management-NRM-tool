@@ -186,6 +186,14 @@ Interaction fields remain at their existing draft locations, while `person`,
 extracted values remain `null`; they are not invented merely to satisfy the
 downstream draft.
 
+Text-only requests are rejected before Ollama when they contain an exact Twilio
+carrier keyword or lack enough content to identify a person/topic and an
+interaction. For usable captures, Python validates more than JSON shape: names,
+organizations, platforms, and summaries must have evidence in the source text,
+and an entirely empty first draft is invalid. A grounding failure receives the
+normal single repair attempt; a second failure returns `AI_SCHEMA_ERROR` rather
+than passing unsupported fields downstream.
+
 `interaction.summary` intentionally omits the person's name because the same
 validated response already carries it in `person.name`. The summary records the
 substance or purpose of the interaction, avoiding duplicated identity data.
@@ -263,10 +271,11 @@ PYTHONPATH=local-api python3 local-api/scripts/run_stage7_regression.py
 
 ## Live regression corpus
 
-The versioned corpus is `local-api/regression/corpus.json`. It includes new and
-existing contact references, an ambiguous date, a missing organization, two
-synthetic owners, a platform-only correction, and the three revision-scope
-scenarios covered by the deterministic runner above.
+The versioned corpus is `local-api/regression/corpus.json`. It includes a
+reserved-keyword rejection (`START`), new and existing contact references, an
+ambiguous date, a missing organization, two synthetic owners, a platform-only
+correction, and the three revision-scope scenarios covered by the deterministic
+runner above.
 
 With Ollama reachable:
 

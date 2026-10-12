@@ -47,6 +47,109 @@ ALLOWED_PLATFORMS = [platform.value for platform in Platform]
 ChatFunction = Callable[[list[dict[str, Any]], dict[str, Any]], str]
 ValidatedModel = TypeVar("ValidatedModel", AIOutputContract, RevisionPatch)
 
+TWILIO_RESERVED_KEYWORDS = frozenset(
+    {
+        "STOP",
+        "STOPALL",
+        "UNSUBSCRIBE",
+        "CANCEL",
+        "END",
+        "QUIT",
+        "REVOKE",
+        "OPTOUT",
+        "START",
+        "UNSTOP",
+        "YES",
+        "HELP",
+        "INFO",
+    }
+)
+CAPTURE_WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'’-]*")
+SHORT_CAPTURE_INTERACTION_CUES = frozenset(
+    {
+        "met",
+        "meet",
+        "meeting",
+        "saw",
+        "called",
+        "call",
+        "phoned",
+        "texted",
+        "emailed",
+        "spoke",
+        "talked",
+        "coffee",
+        "lunch",
+        "dinner",
+        "zoom",
+    }
+)
+GENERIC_CAPTURE_WORDS = frozenset(
+    {
+        "a",
+        "an",
+        "the",
+        "this",
+        "that",
+        "it",
+        "with",
+        "to",
+        "at",
+        "in",
+        "on",
+        "person",
+        "someone",
+        "something",
+        "message",
+        "test",
+        "hello",
+        "hi",
+        "thanks",
+        "thank",
+        "ok",
+        "okay",
+    }
+)
+SUMMARY_GROUNDING_STOPWORDS = GENERIC_CAPTURE_WORDS.union(
+    {
+        "and",
+        "or",
+        "of",
+        "for",
+        "from",
+        "about",
+        "discussed",
+        "discuss",
+        "talked",
+        "spoke",
+        "met",
+        "interaction",
+        "details",
+        "project",
+    }
+)
+PLATFORM_GROUNDING_PATTERNS = {
+    Platform.IN_PERSON: re.compile(
+        r"\b(?:met|meet|meeting|saw|coffee|lunch|dinner|in[ -]person|face[ -]to[ -]face)\b",
+        re.IGNORECASE,
+    ),
+    Platform.TEXT: re.compile(r"\b(?:texted|text message|sms)\b", re.IGNORECASE),
+    Platform.CALL: re.compile(
+        r"\b(?:called|phoned|phone call|telephone call)\b", re.IGNORECASE
+    ),
+    Platform.EMAIL: re.compile(r"\b(?:emailed|email)\b", re.IGNORECASE),
+    Platform.LINKEDIN: re.compile(r"\blinkedin\b", re.IGNORECASE),
+    Platform.INSTAGRAM: re.compile(r"\binstagram\b", re.IGNORECASE),
+    Platform.EVENT: re.compile(
+        r"\b(?:summit|conference|trade show|networking event)\b", re.IGNORECASE
+    ),
+    Platform.VIDEO_CALL: re.compile(
+        r"\b(?:video call|zoom|google meet|facetime|microsoft teams|teams call)\b",
+        re.IGNORECASE,
+    ),
+    Platform.OTHER: re.compile(r"\b(?:platform|channel|medium)\b", re.IGNORECASE),
+}
+
 DATE_CORRECTION_CUES = re.compile(
     r"\b(?:date|dated|today|yesterday|tomorrow|tonight|"
     r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
@@ -136,6 +239,14 @@ schema exactly and use schema_version "1.0".
 Rules, in priority order:
 1. Extract only facts supported by the user's text. Use null for missing fields.
 2. Put uncertainty in warnings instead of guessing or fabricating precision.
+   Every non-null person name and organization must be grounded in words that
+   actually appear in the message. Never emit placeholder identities such as
+   "John Doe" or "Jane Doe" unless that exact name appears in the message.
+   Every non-null platform must have an explicit channel cue in the message.
+   Every non-null summary must paraphrase concrete message content; never use
+   generic filler such as "discussed project details" when no such details are
+   present. Identity evidence must identify the supporting message words, and
+   confidence 1.0 is only valid for completely explicit, unambiguous evidence.
 3. Use only these platform enum values: {platforms}. Apply these mappings:
    - coffee, lunch, dinner, or meeting physically together -> IN_PERSON
    - a named summit, conference, trade show, or networking event -> EVENT
@@ -259,6 +370,8 @@ def process_interaction(
             media_temp_root=media_temp_root,
         )
 
+    _validate_capture_text(request.raw_body)
+
     messages = [
         {"role": "system", "content": SYSTEM_CONTRACT},
         {
@@ -272,13 +385,167 @@ def process_interaction(
         },
         {"role": "user", "content": request.raw_body},
     ]
-    output = _validated_model(messages, AIOutputContract, chat=chat)
+    output = _validated_model(
+        messages,
+        AIOutputContract,
+        chat=chat,
+        validator=lambda candidate: _validate_text_output_grounding(
+            candidate,
+            raw_body=request.raw_body,
+        ),
+    )
     return _draft_from_output(
         output,
         raw_body=request.raw_body,
         media_refs=request.media_refs,
         ai_model=os.environ.get(OLLAMA_MODEL_ENV, DEFAULT_OLLAMA_MODEL),
     )
+
+
+def _validate_capture_text(raw_body: str) -> None:
+    normalized = raw_body.strip().upper()
+    if normalized in TWILIO_RESERVED_KEYWORDS:
+        raise InferenceError(
+            "RESERVED_MESSAGING_KEYWORD",
+            "Carrier messaging keyword is not an NRM interaction capture.",
+            stage="input_validation",
+        )
+
+    words = [word.casefold() for word in CAPTURE_WORD_RE.findall(raw_body)]
+    if len(words) >= 3:
+        return
+    has_interaction_cue = any(word in SHORT_CAPTURE_INTERACTION_CUES for word in words)
+    has_specific_subject = any(
+        word not in SHORT_CAPTURE_INTERACTION_CUES
+        and word not in GENERIC_CAPTURE_WORDS
+        for word in words
+    )
+    specific_word_count = sum(word not in GENERIC_CAPTURE_WORDS for word in words)
+    if len(words) >= 2 and (
+        specific_word_count >= 2 or (has_interaction_cue and has_specific_subject)
+    ):
+        return
+    raise InferenceError(
+        "INSUFFICIENT_CAPTURE_CONTENT",
+        "Capture needs a person or topic plus what happened.",
+        stage="input_validation",
+    )
+
+
+def _validate_text_output_grounding(
+    output: AIOutputContract,
+    *,
+    raw_body: str,
+) -> None:
+    if output.interaction.summary and output.person.name:
+        output.interaction.summary = _summary_without_person_name(
+            output.interaction.summary,
+            person_name=output.person.name,
+            organization=output.person.organization,
+        )
+
+    raw_casefold = raw_body.casefold()
+    raw_words = {word.casefold() for word in CAPTURE_WORD_RE.findall(raw_body)}
+    violations: list[str] = []
+
+    person_values = [
+        output.person.name,
+        output.person.phone,
+        output.person.email,
+        output.person.organization,
+        output.person.context_tag,
+    ]
+    interaction_values = [
+        output.interaction.date,
+        output.interaction.platform,
+        output.interaction.summary,
+    ]
+    if not any(value is not None for value in person_values + interaction_values):
+        violations.append("draft is empty despite a usable capture")
+
+    if output.person.name:
+        name_words = {
+            word.casefold()
+            for word in CAPTURE_WORD_RE.findall(output.person.name)
+            if len(word) > 1
+        }
+        if not name_words.intersection(raw_words):
+            violations.append("person.name has no support in the message")
+
+    if output.person.organization:
+        organization_words = {
+            word.casefold()
+            for word in CAPTURE_WORD_RE.findall(output.person.organization)
+            if len(word) > 2 and word.casefold() not in {"inc", "llc", "corp"}
+        }
+        if organization_words and not organization_words.intersection(raw_words):
+            violations.append("person.organization has no support in the message")
+
+    if output.person.phone:
+        raw_digits = re.sub(r"\D", "", raw_body)
+        phone_digits = re.sub(r"\D", "", output.person.phone)
+        if phone_digits and phone_digits not in raw_digits:
+            violations.append("person.phone has no support in the message")
+
+    if output.person.email and output.person.email.casefold() not in raw_casefold:
+        violations.append("person.email has no support in the message")
+
+    if output.interaction.platform:
+        pattern = PLATFORM_GROUNDING_PATTERNS[output.interaction.platform]
+        if not pattern.search(raw_body):
+            violations.append("interaction.platform has no channel evidence in the message")
+
+    if output.interaction.summary:
+        summary_words = {
+            word.casefold()
+            for word in CAPTURE_WORD_RE.findall(output.interaction.summary)
+            if len(word) > 2 and word.casefold() not in SUMMARY_GROUNDING_STOPWORDS
+        }
+        if not summary_words.intersection(raw_words):
+            violations.append("interaction.summary has no substantive support in the message")
+    has_identity_fact = any(value for value in person_values)
+    if output.identity.confidence > 0 and not has_identity_fact:
+        violations.append("identity.confidence is positive without an extracted identity fact")
+
+    if violations:
+        raise InferenceError(
+            "AI_SCHEMA_ERROR",
+            "Grounding validation failed: " + "; ".join(violations),
+            stage="response_validation",
+        )
+
+
+def _summary_without_person_name(
+    summary: str,
+    *,
+    person_name: str,
+    organization: str | None,
+) -> str:
+    cleaned = summary
+    escaped_name = re.escape(person_name.strip())
+    if organization and organization.strip():
+        escaped_organization = re.escape(organization.strip())
+        cleaned = re.sub(
+            rf"\bwith\s+{escaped_name}\s+from\s+{escaped_organization}\b",
+            f"with an {organization.strip()} contact",
+            cleaned,
+            flags=re.IGNORECASE,
+        )
+    cleaned = re.sub(
+        rf"\s+\bwith\s+{escaped_name}\b",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        rf"\b{escaped_name}\b",
+        "the contact",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned
 
 
 def _process_media_interaction(
@@ -436,7 +703,10 @@ def _validated_model(
                 "Your JSON failed validation with this error: "
                 f"{first_error.code}: {first_error.message}. "
                 "Return only a corrected JSON object. Fix the stated problem and "
-                "preserve all otherwise valid values."
+                "preserve all otherwise valid values. Do not drop a field that the "
+                "validation error says is required. If a required summary repeats "
+                "person.name, keep the topic and replace the name with the supplied "
+                "organization or role (for example, 'an Acme Robotics contact')."
             ),
         },
     ]
@@ -450,26 +720,14 @@ def _validate_revision_patch_scope(
     correction: str,
     existing: AIOutputContract,
 ) -> None:
-    changes = {change.field: change.value for change in patch.changes}
     violations: list[str] = []
-
-    if "interaction.date" in changes and not DATE_CORRECTION_CUES.search(correction):
-        violations.append(
-            "interaction.date is unsupported because the correction contains no date evidence"
-        )
-    if (
-        "interaction.platform" in changes
-        and not PLATFORM_CORRECTION_CUES.search(correction)
-    ):
-        violations.append(
-            "interaction.platform is unsupported because the correction contains no channel evidence"
-        )
+    original_changes = {change.field: change.value for change in patch.changes}
 
     added_identity_context = (
-        changes.get("person.organization") is not None
+        original_changes.get("person.organization") is not None
         and existing.person.organization is None
     ) or (
-        changes.get("person.context_tag") is not None
+        original_changes.get("person.context_tag") is not None
         and existing.person.context_tag is None
     )
     substantive_correction = bool(SUBSTANTIVE_SUMMARY_CUES.search(correction))
@@ -478,7 +736,7 @@ def _validate_revision_patch_scope(
         or DATE_ONLY_CORRECTION.fullmatch(correction)
         or NAME_SPELLING_ONLY_CORRECTION.fullmatch(correction)
     )
-    non_summary_fields = set(changes).difference({"interaction.summary"})
+    non_summary_fields = set(original_changes).difference({"interaction.summary"})
     narrow_field_only_patch = bool(non_summary_fields) and non_summary_fields.issubset(
         {"interaction.platform", "interaction.date", "person.name"}
     )
@@ -487,12 +745,30 @@ def _validate_revision_patch_scope(
         and not substantive_correction
         and not added_identity_context
     )
-    if summary_must_be_preserved and "interaction.summary" in changes:
+
+    filtered_changes = []
+    for change in patch.changes:
+        if change.field == "interaction.date" and not DATE_CORRECTION_CUES.search(
+            correction
+        ):
+            continue
+        if (
+            change.field == "interaction.platform"
+            and not PLATFORM_CORRECTION_CUES.search(correction)
+        ):
+            continue
+        if change.field == "interaction.summary" and summary_must_be_preserved:
+            continue
+        filtered_changes.append(change)
+    patch.changes = filtered_changes
+    changes = {change.field: change.value for change in patch.changes}
+
+    if not changes and original_changes:
         violations.append(
-            "interaction.summary is unsupported because the correction changes "
-            "only platform, date, or name spelling"
+            "revision patch contains no correction-supported changes after removing unrelated fields"
         )
-    elif added_identity_context or substantive_correction:
+
+    if added_identity_context or substantive_correction:
         proposed_summary = changes.get("interaction.summary")
         if (
             proposed_summary is None
@@ -501,6 +777,29 @@ def _validate_revision_patch_scope(
             violations.append(
                 "interaction.summary must be refreshed when the correction adds substantive content or new organization/context"
             )
+
+    proposed_summary = changes.get("interaction.summary")
+    final_person_name = changes.get("person.name", existing.person.name)
+    final_organization = changes.get(
+        "person.organization", existing.person.organization
+    )
+    if (
+        isinstance(proposed_summary, str)
+        and isinstance(final_person_name, str)
+        and final_person_name.strip()
+        and final_person_name.casefold() in proposed_summary.casefold()
+    ):
+        sanitized_summary = _summary_without_person_name(
+            proposed_summary,
+            person_name=final_person_name,
+            organization=(
+                final_organization if isinstance(final_organization, str) else None
+            ),
+        )
+        for change in patch.changes:
+            if change.field == "interaction.summary":
+                change.value = sanitized_summary
+                break
 
     if violations:
         raise InferenceError(

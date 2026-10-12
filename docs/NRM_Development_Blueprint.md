@@ -48,7 +48,7 @@ NRM replies: "Sarah Chen — NAVWAR
 Aug 24 · In Person
 Discussed autonomous mine detection and NAVWAR data-integration interests.
 
-Reply YES to log, or send a correction."
+Reply CONFIRM to log, or send a correction."
 
 ## 2.3 Core Capabilities for Version 1
 
@@ -216,7 +216,7 @@ PROCESSING ─────failure────► ERROR
                                   ▼ user selects
                             PENDING_REVIEW
                                   │
-                  correction ◄────┼────► YES
+                  correction ◄────┼────► CONFIRM
                       │            │        │
                       ▼            │        ▼
                    REVISING ───────┘      COMMIT
@@ -443,7 +443,7 @@ The project should advance through gated stages. Each stage has a deliverable an
 
 - Replace parseIncomingSMS and addOrUpdateContact with normalized, owner_id-aware event routing.
 - Implement PROCESSING, DISAMBIGUATING, PENDING_REVIEW, REVISING, and ERROR handlers.
-- Implement candidate-number parsing and YES approval logic, scoped to the owner's own candidates.
+- Implement candidate-number parsing and CONFIRM approval logic, scoped to the owner's own candidates.
 - Implement guarded commit into Contacts + Interactions, including the OWNER_MISMATCH check.
 - Add MessageSid duplicate checks and revision_count.
 
@@ -536,7 +536,7 @@ The project should advance through gated stages. Each stage has a deliverable an
 
 | Test | Expected result |
 | --- | --- |
-| Text-only, existing unique contact | Draft binds to correct contact; YES commits once. |
+| Text-only, existing unique contact | Draft binds to correct contact; CONFIRM commits once. |
 | Text-only, new person | New-contact proposal + interaction review. |
 | Duplicate name | DISAMBIGUATING list appears; numbered choice binds correct contact. |
 | Correction after draft | REVISING produces new draft; original is not committed. |
@@ -614,7 +614,7 @@ The current Apps Script should be archived, not incrementally extended. It is a 
 - FastAPI extracts JSON.
 - Resolver finds one strong contact match within that owner's contacts.
 - NRM sends PENDING_REVIEW summary.
-- User replies YES.
+- User replies CONFIRM.
 - Interaction is appended with owner_id; Contact last_contact/last_platform are updated; staging is cleared.
 
 ## 15.2 Ambiguous Contact
@@ -626,10 +626,10 @@ The current Apps Script should be archived, not incrementally extended. It is a 
 
 ## 15.3 Correction Loop
 
-- User receives draft but replies with a correction instead of YES.
+- User receives draft but replies with a correction instead of CONFIRM.
 - State changes to REVISING and the existing draft + correction (with owner_id) are sent to /revise-draft.
 - Validated revised JSON replaces draft_json and revision_count increments.
-- State returns to PENDING_REVIEW. Nothing permanent is written until YES.
+- State returns to PENDING_REVIEW. Nothing permanent is written until CONFIRM.
 
 ## 15.4 Two Beta Users, Overlapping Names
 

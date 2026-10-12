@@ -13,11 +13,12 @@ function runStage3Tests() {
     _nrmRunTest_('explicit NO DATE approval', _nrmTestExplicitNoDateApproval_),
     _nrmRunTest_('missing contact name prompt', _nrmTestMissingContactNamePrompt_),
     _nrmRunTest_('open-review per-state routing trace', _nrmTestOpenReviewStateRouting_),
-    _nrmRunTest_('CANCEL and command isolation', _nrmTestCancelAndCommandIsolation_),
+    _nrmRunTest_('DISCARD and command isolation', _nrmTestDiscardAndCommandIsolation_),
+    _nrmRunTest_('reserved keyword and content-free ingress guard', _nrmTestCaptureIngressGuard_),
     _nrmRunTest_('PROCESSING lock contention reply', _nrmTestProcessingLockContention_),
     _nrmRunTest_('OWNER_MISMATCH hard rejection', _nrmTestOwnerMismatchCommit_),
     _nrmRunTest_('Local API owner passthrough guard', _nrmTestLocalAiOwnerMismatch_),
-    _nrmRunTest_('candidate and YES parsing', _nrmTestReplyParsing_),
+    _nrmRunTest_('candidate and CONFIRM parsing', _nrmTestReplyParsing_),
     _nrmRunTest_('Stage 3 persistence owner guards', _nrmTestStage3PersistenceOwnerGuards_)
   ];
   results.forEach(function (line) { Logger.log(line); });
@@ -61,7 +62,7 @@ function runStage3FastApiIntegrationTest() {
       _nrmAssert_(revised.state === 'PENDING_REVIEW', 'FastAPI revision did not return to review.');
       const committed = handleNormalizedEvent({
         message_sid: 'SM3_HTTP_APPROVE', owner_id: ownerId,
-        review_id: started.review_id, body: 'YES'
+        review_id: started.review_id, body: 'CONFIRM'
       });
       _nrmAssert_(committed.state === 'COMMITTED', 'HTTP-backed review did not commit.');
       const interactions = _nrmReadOwnedRows_('Interactions', ownerId);
@@ -110,7 +111,7 @@ function _nrmTestConcurrentOwnerLoop_() {
 
     const ownerBCommitted = handleNormalizedEvent({
       message_sid: 'SM3_B_APPROVE', owner_id: NRM_TEST_OWNER_B,
-      review_id: ownerBStart.review_id, body: 'YES'
+      review_id: ownerBStart.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(ownerBCommitted.state === 'COMMITTED', 'Owner B approval did not commit.');
     _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_B).length === 1, 'Owner B interaction missing.');
@@ -162,7 +163,7 @@ function _nrmTestMessageSidDuplicates_() {
     _nrmAssert_(ownerB.duplicate === false, 'Same MessageSid under another owner was treated globally.');
     const approval = {
       message_sid: 'SM3_B_DUP_APPROVAL', owner_id: NRM_TEST_OWNER_B,
-      review_id: ownerB.review_id, body: 'YES'
+      review_id: ownerB.review_id, body: 'CONFIRM'
     };
     _nrmAssert_(handleNormalizedEvent(approval).state === 'COMMITTED', 'Owner B approval failed.');
     _nrmAssert_(handleNormalizedEvent(approval).duplicate === true, 'Duplicate follow-up MessageSid not detected.');
@@ -202,7 +203,7 @@ function _nrmTestNewContactCommit_() {
     _nrmAssert_(stagedBundle.contact.email === 'jordan@example.test', 'AI person.email was not staged.');
     const committed = handleNormalizedEvent({
       message_sid: 'SM3_NEW_APPROVE', owner_id: NRM_TEST_OWNER_A,
-      review_id: started.review_id, body: 'YES'
+      review_id: started.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(committed.state === 'COMMITTED', 'New contact approval failed.');
     const contacts = searchContacts('Jordan New', NRM_TEST_OWNER_A);
@@ -254,7 +255,7 @@ function _nrmTestExistingContactCommit_() {
     _nrmAssert_(staged.selected_contact_id === 'contact_b_work', 'AI person name did not resolve the owned existing contact.');
     const committed = handleNormalizedEvent({
       message_sid: 'SM3_EXISTING_APPROVE', owner_id: NRM_TEST_OWNER_B,
-      review_id: started.review_id, body: 'YES'
+      review_id: started.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(committed.state === 'COMMITTED', 'Existing-contact approval failed.');
     _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length === beforeContacts, 'Existing-contact commit created a duplicate Contact.');
@@ -297,11 +298,11 @@ function _nrmTestMissingDatePromptAndCorrection_() {
 
     const prematureYes = handleNormalizedEvent({
       message_sid: 'SM3_MISSING_DATE_YES', owner_id: NRM_TEST_OWNER_A,
-      review_id: started.review_id, body: 'YES'
+      review_id: started.review_id, body: 'CONFIRM'
     });
-    _nrmAssert_(prematureYes.state === 'PENDING_REVIEW', 'YES with missing date entered ERROR or committed.');
-    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === 2, 'Premature YES partially created a Contact.');
-    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'Premature YES wrote an Interaction.');
+    _nrmAssert_(prematureYes.state === 'PENDING_REVIEW', 'CONFIRM with missing date entered ERROR or committed.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === 2, 'Premature CONFIRM partially created a Contact.');
+    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'Premature CONFIRM wrote an Interaction.');
 
     const revised = handleNormalizedEvent({
       message_sid: 'SM3_DATE_CORRECTION', owner_id: NRM_TEST_OWNER_A,
@@ -311,7 +312,7 @@ function _nrmTestMissingDatePromptAndCorrection_() {
     _nrmAssert_(revised.missing_fields.length === 0, 'Supplied date remained missing.');
     const committed = handleNormalizedEvent({
       message_sid: 'SM3_DATE_APPROVE', owner_id: NRM_TEST_OWNER_A,
-      review_id: started.review_id, body: 'YES'
+      review_id: started.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(committed.state === 'COMMITTED', 'Corrected date did not commit.');
     const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);
@@ -329,8 +330,8 @@ function _nrmTestMissingDatePromptAndCorrection_() {
     const validationEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
       return entry.record.event_type === 'VALIDATION_REQUIRED';
     });
-    _nrmAssert_(validationEvents.length === 1, 'Missing-date YES did not log VALIDATION_REQUIRED.');
-    return 'PASS missing date prompt then supplied date: draft named interaction_date before confirmation; premature YES wrote no Contact/Interaction; date revision committed 2026-10-03.';
+    _nrmAssert_(validationEvents.length === 1, 'Missing-date CONFIRM did not log VALIDATION_REQUIRED.');
+    return 'PASS missing date prompt then supplied date: draft named interaction_date before confirmation; premature CONFIRM wrote no Contact/Interaction; date revision committed 2026-10-03.';
   });
 }
 
@@ -365,12 +366,12 @@ function _nrmTestExplicitNoDateApproval_() {
     _nrmAssert_(Number(staged.revision_count) === 1, 'NO DATE did not traverse the revision state path.');
     const committed = handleNormalizedEvent({
       message_sid: 'SM3_NO_DATE_APPROVE', owner_id: NRM_TEST_OWNER_A,
-      review_id: started.review_id, body: 'YES'
+      review_id: started.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(committed.state === 'COMMITTED', 'Explicit NO DATE did not commit.');
     const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);
     _nrmAssert_(interactions.length === 1 && interactions[0].record.interaction_date === '', 'NO DATE was not stored as blank.');
-    return 'PASS explicit NO DATE approval: command traversed REVISING, set draft_json review_control, bypassed the model, and committed one blank-date Interaction only after YES.';
+    return 'PASS explicit NO DATE approval: command traversed REVISING, set draft_json review_control, bypassed the model, and committed one blank-date Interaction only after CONFIRM.';
   });
 }
 
@@ -393,12 +394,12 @@ function _nrmTestMissingContactNamePrompt_() {
     _nrmAssert_(started.message.indexOf("I need the person's name.") !== -1, 'Specific name prompt missing.');
     const prematureYes = handleNormalizedEvent({
       message_sid: 'SM3_MISSING_NAME_YES', owner_id: NRM_TEST_OWNER_A,
-      review_id: started.review_id, body: 'YES'
+      review_id: started.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(prematureYes.state === 'PENDING_REVIEW', 'Missing name entered ERROR.');
     _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === 2, 'Missing name partially wrote Contact.');
     _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'Missing name wrote Interaction.');
-    return 'PASS missing contact name prompt: unnamed capture stayed PENDING_REVIEW, named contact.display_name in plain language, and premature YES wrote nothing permanent.';
+    return 'PASS missing contact name prompt: unnamed capture stayed PENDING_REVIEW, named contact.display_name in plain language, and premature CONFIRM wrote nothing permanent.';
   });
 }
 
@@ -438,7 +439,7 @@ function _nrmTestOpenReviewStateRouting_() {
     });
     _nrmAssert_(disambiguatingReply.state === 'DISAMBIGUATING', 'Invalid candidate changed state.');
     _nrmAssert_(disambiguatingReply.message.indexOf('waiting for a contact choice') !== -1, 'Disambiguation guidance missing.');
-    trace.push('DISAMBIGUATING=>rejected/state unchanged/reply=choose 1-2 or CANCEL');
+    trace.push('DISAMBIGUATING=>rejected/state unchanged/reply=choose 1-2 or DISCARD');
     deleteStaging(disambiguating.review_id, NRM_TEST_OWNER_A);
 
     const pending = createStaging({
@@ -468,8 +469,8 @@ function _nrmTestOpenReviewStateRouting_() {
       owner_number: '+15550000904', body: 'Another capture.'
     });
     _nrmAssert_(errorReply.state === 'ERROR', 'ERROR rejection changed state.');
-    _nrmAssert_(errorReply.message.indexOf('Reply CANCEL to clear it') !== -1, 'ERROR recovery guidance missing.');
-    trace.push('ERROR=>rejected/state unchanged/reply=CANCEL then resend');
+    _nrmAssert_(errorReply.message.indexOf('Reply DISCARD to clear it') !== -1, 'ERROR recovery guidance missing.');
+    trace.push('ERROR=>rejected/state unchanged/reply=DISCARD then resend');
 
     const rejectionEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
       return entry.record.event_type === 'MESSAGE_REJECTED_OPEN_REVIEW';
@@ -492,7 +493,7 @@ function _nrmTestOpenReviewStateRouting_() {
   });
 }
 
-function _nrmTestCancelAndCommandIsolation_() {
+function _nrmTestDiscardAndCommandIsolation_() {
   return _nrmWithStage3Spreadsheet_(function () {
     const ownerAContactsBefore = _nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length;
     const ownerBContactsBefore = _nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length;
@@ -508,36 +509,43 @@ function _nrmTestCancelAndCommandIsolation_() {
       draft_json: { contact: { display_name: 'Sarah Chen' }, interaction: _nrmStage3DummyDraft_('Owner B.', []) }
     }, NRM_TEST_OWNER_B);
 
+    const reservedCancel = handleNormalizedEvent({
+      message_sid: 'SM3_CANCEL_RESERVED', owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000801', body: 'CANCEL'
+    });
+    _nrmAssert_(reservedCancel.state === 'IGNORED_TWILIO_KEYWORD', 'CANCEL was retained as a hidden discard alias.');
+    _nrmAssert_(findStagingByReviewId(ownerA.review_id, NRM_TEST_OWNER_A) !== null, 'Reserved CANCEL deleted Staging.');
+
     const cancelled = handleNormalizedEvent({
       message_sid: 'SM3_CANCEL_A_COMMAND', owner_id: NRM_TEST_OWNER_A,
-      owner_number: '+15550000801', body: ' cancel '
+      owner_number: '+15550000801', body: ' discard '
     });
-    _nrmAssert_(cancelled.state === 'CANCELLED', 'CANCEL did not confirm cancellation.');
+    _nrmAssert_(cancelled.state === 'CANCELLED', 'DISCARD did not confirm cancellation.');
     _nrmAssert_(findStagingByReviewId(ownerA.review_id, NRM_TEST_OWNER_A) === null, 'Owner A Staging row remained.');
-    _nrmAssert_(findStagingByReviewId(ownerB.review_id, NRM_TEST_OWNER_B) !== null, 'Owner A CANCEL deleted Owner B Staging.');
+    _nrmAssert_(findStagingByReviewId(ownerB.review_id, NRM_TEST_OWNER_B) !== null, 'Owner A DISCARD deleted Owner B Staging.');
 
     const crossOwnerCancel = handleNormalizedEvent({
       message_sid: 'SM3_CANCEL_CROSS_OWNER', owner_id: NRM_TEST_OWNER_A,
-      owner_number: '+15550000801', review_id: ownerB.review_id, body: 'CANCEL'
+      owner_number: '+15550000801', review_id: ownerB.review_id, body: 'DISCARD'
     });
     _nrmAssert_(crossOwnerCancel.state === 'ERROR', 'Foreign review_id was not rejected.');
-    _nrmAssert_(findStagingByReviewId(ownerB.review_id, NRM_TEST_OWNER_B) !== null, 'Cross-owner CANCEL deleted Owner B Staging.');
+    _nrmAssert_(findStagingByReviewId(ownerB.review_id, NRM_TEST_OWNER_B) !== null, 'Cross-owner DISCARD deleted Owner B Staging.');
 
     const noOpenCancel = handleNormalizedEvent({
       message_sid: 'SM3_CANCEL_NO_OPEN', owner_id: NRM_TEST_OWNER_A,
-      owner_number: '+15550000801', body: 'CANCEL'
+      owner_number: '+15550000801', body: 'DISCARD'
     });
-    _nrmAssert_(noOpenCancel.state === 'NO_OPEN_REVIEW', 'CANCEL without review started a capture.');
+    _nrmAssert_(noOpenCancel.state === 'NO_OPEN_REVIEW', 'DISCARD without review started a capture.');
     const noOpenDate = handleNormalizedEvent({
       message_sid: 'SM3_NO_DATE_NO_OPEN', owner_id: NRM_TEST_OWNER_A,
       owner_number: '+15550000801', body: 'NO DATE'
     });
     _nrmAssert_(noOpenDate.state === 'NO_OPEN_REVIEW', 'NO DATE without review started a capture.');
     _nrmAssert_(_nrmReadOwnedRows_('Staging', NRM_TEST_OWNER_A).length === 0, 'Command without open review created Staging.');
-    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === ownerAContactsBefore, 'CANCEL changed Owner A Contacts.');
-    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length === ownerBContactsBefore, 'CANCEL changed Owner B Contacts.');
-    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'CANCEL changed Owner A Interactions.');
-    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_B).length === 0, 'CANCEL changed Owner B Interactions.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_A).length === ownerAContactsBefore, 'DISCARD changed Owner A Contacts.');
+    _nrmAssert_(_nrmReadOwnedRows_('Contacts', NRM_TEST_OWNER_B).length === ownerBContactsBefore, 'DISCARD changed Owner B Contacts.');
+    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'DISCARD changed Owner A Interactions.');
+    _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_B).length === 0, 'DISCARD changed Owner B Interactions.');
 
     const cancelledEvents = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
       return entry.record.event_type === 'CANCELLED';
@@ -547,8 +555,61 @@ function _nrmTestCancelAndCommandIsolation_() {
     _nrmAssert_(cancelDetails.message_sid === 'SM3_CANCEL_A_COMMAND', 'CANCELLED log has wrong MessageSid.');
     _nrmAssert_(cancelDetails.existing_review_id === ownerA.review_id && cancelDetails.state === 'ERROR', 'CANCELLED log lacks prior review/state.');
     const serializedEvents = JSON.stringify(_nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A));
-    _nrmAssert_(serializedEvents.indexOf('OWNER_A_PRIVATE_BODY') === -1, 'CANCEL EventLog retained raw body.');
-    return 'PASS CANCEL and command isolation: owner A deleted only its ERROR Staging row; owner B row and both owners\' Contacts/Interactions were untouched; CANCEL/NO DATE without an open review created no capture.';
+    _nrmAssert_(serializedEvents.indexOf('OWNER_A_PRIVATE_BODY') === -1, 'DISCARD EventLog retained raw body.');
+    return 'PASS DISCARD and command isolation: reserved CANCEL left Staging intact; DISCARD deleted only owner A\'s ERROR row; owner B and permanent records were untouched; DISCARD/NO DATE without an open review created no capture.';
+  });
+}
+
+function _nrmTestCaptureIngressGuard_() {
+  return _nrmWithStage3Spreadsheet_(function () {
+    let aiCalls = 0;
+    NRM_TEST_LOCAL_AI_CLIENT_ = function () {
+      aiCalls += 1;
+      throw new Error('Rejected ingress must not call Local AI.');
+    };
+
+    NRM_TWILIO_RESERVED_KEYWORDS.forEach(function (keyword, index) {
+      const ignored = handleNormalizedEvent({
+        message_sid: 'SM3_RESERVED_' + index,
+        owner_id: NRM_TEST_OWNER_A,
+        owner_number: '+15550000601',
+        body: index % 2 ? keyword.toLowerCase() : keyword
+      });
+      _nrmAssert_(ignored.state === 'IGNORED_TWILIO_KEYWORD', keyword + ' was not ignored.');
+      _nrmAssert_(ignored.message === '', keyword + ' generated an NRM reply.');
+    });
+
+    const insufficient = handleNormalizedEvent({
+      message_sid: 'SM3_CONTENT_FREE',
+      owner_id: NRM_TEST_OWNER_A,
+      owner_number: '+15550000601',
+      body: 'Hello'
+    });
+    _nrmAssert_(insufficient.state === 'NEEDS_MORE_DETAIL', 'Content-free capture was not rejected.');
+    _nrmAssert_(
+      insufficient.message === 'Please resend with the person\'s name and what happened.',
+      'Content-free guidance is wrong.'
+    );
+    _nrmAssert_(aiCalls === 0, 'Reserved or content-free input called Local AI.');
+    _nrmAssert_(_nrmReadOwnedRows_('Staging', NRM_TEST_OWNER_A).length === 0, 'Rejected ingress created Staging.');
+
+    const eventTypes = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).map(function (entry) {
+      return entry.record.event_type;
+    });
+    _nrmAssert_(
+      eventTypes.filter(function (value) { return value === 'TWILIO_KEYWORD_IGNORED'; }).length ===
+        NRM_TWILIO_RESERVED_KEYWORDS.length,
+      'Reserved keyword audit events are incomplete.'
+    );
+    _nrmAssert_(
+      eventTypes.indexOf('MESSAGE_REJECTED_INSUFFICIENT_CONTENT') !== -1,
+      'Content-free rejection audit event is missing.'
+    );
+    const serializedEvents = JSON.stringify(_nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A));
+    _nrmAssert_(serializedEvents.indexOf('Hello') === -1, 'Content-free audit log retained raw body.');
+    return 'PASS reserved keyword and content-free ingress guard: all ' +
+      NRM_TWILIO_RESERVED_KEYWORDS.length +
+      ' Twilio keywords plus a one-word greeting bypassed Local AI and created zero Staging rows.';
   });
 }
 
@@ -610,7 +671,7 @@ function _nrmTestEmptyContactBundleCommit_() {
       message_sid: 'SM3_EMPTY_CONTACT_APPROVE',
       owner_id: NRM_TEST_OWNER_A,
       review_id: staging.review_id,
-      body: 'YES'
+      body: 'CONFIRM'
     });
     _nrmAssert_(committed.state === 'COMMITTED', 'Empty staged contact did not commit from AI person.');
     const contacts = searchContacts('Taylor Reed', NRM_TEST_OWNER_A);
@@ -646,7 +707,7 @@ function _nrmTestOwnerMismatchCommit_() {
     const before = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length;
     const rejected = handleNormalizedEvent({
       message_sid: 'SM3_FAULT_APPROVE', owner_id: NRM_TEST_OWNER_A,
-      review_id: staging.review_id, body: 'YES'
+      review_id: staging.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(rejected.state === 'ERROR', 'Owner mismatch did not enter ERROR.');
     _nrmAssert_(rejected.message === 'Owner mismatch rejected.', 'Owner mismatch was not hard-rejected.');
@@ -657,7 +718,7 @@ function _nrmTestOwnerMismatchCommit_() {
     _nrmAssert_(!ownerBLogs.some(function (row) { return row.event_type === 'OWNER_MISMATCH'; }), 'Owner mismatch log leaked to owner B.');
     const errorReply = handleNormalizedEvent({
       message_sid: 'SM3_FAULT_AFTER_ERROR', owner_id: NRM_TEST_OWNER_A,
-      review_id: staging.review_id, body: 'YES'
+      review_id: staging.review_id, body: 'CONFIRM'
     });
     _nrmAssert_(errorReply.state === 'ERROR', 'ERROR handler did not retain state.');
     return 'PASS OWNER_MISMATCH hard rejection: corrupt foreign contact_id wrote nothing, entered ERROR, and emitted owner-scoped critical failure log.';
@@ -686,9 +747,9 @@ function _nrmTestReplyParsing_() {
   _nrmAssert_(parseCandidateNumber_('2', 3) === 1, 'Candidate 2 did not map to index 1.');
   _nrmAssert_(parseCandidateNumber_('0', 3) === null, 'Candidate 0 accepted.');
   _nrmAssert_(parseCandidateNumber_('2 please', 3) === null, 'Non-numeric candidate accepted.');
-  _nrmAssert_(isYesApproval_(' YES ') && isYesApproval_('y'), 'YES approval parsing failed.');
-  _nrmAssert_(!isYesApproval_('yes please') && !isYesApproval_('no'), 'Non-YES reply approved.');
-  return 'PASS candidate and YES parsing: strict 1-based candidate numbers; only YES/Y approve.';
+  _nrmAssert_(isApprovalReply_(' CONFIRM ') && isApprovalReply_('y'), 'CONFIRM approval parsing failed.');
+  _nrmAssert_(!isApprovalReply_('yes') && !isApprovalReply_('yes please') && !isApprovalReply_('no'), 'Reserved or non-CONFIRM reply approved.');
+  return 'PASS candidate and CONFIRM parsing: strict 1-based candidate numbers; only CONFIRM/Y approve.';
 }
 
 function _nrmTestStage3PersistenceOwnerGuards_() {

@@ -9,7 +9,9 @@ function runStage5AppsScriptTests() {
     _nrmRunTest_('Twilio REST request construction', _nrmTestTwilioRestRequestConstruction_),
     _nrmRunTest_('two-owner outbound SMS review loop isolation', _nrmTestWorkerTwoOwnerLoop_),
     _nrmRunTest_('missing-date outbound prompt', _nrmTestMissingDateOutboundPrompt_),
-    _nrmRunTest_('open-review rejection and CANCEL SMS', _nrmTestOpenReviewAndCancelSms_),
+    _nrmRunTest_('open-review rejection and DISCARD SMS', _nrmTestOpenReviewAndDiscardSms_),
+    _nrmRunTest_('reserved keyword and content-free webhook handling', _nrmTestWebhookIngressGuard_),
+    _nrmRunTest_('user-facing command keyword safety', _nrmTestUserFacingCommandKeywordSafety_),
     _nrmRunTest_('outbound failure state integrity', _nrmTestOutboundFailureStateIntegrity_),
     _nrmRunTest_('safe empty TwiML acknowledgement', _nrmTestSafeWorkerResponses_)
   ];
@@ -109,15 +111,15 @@ function _nrmTestWorkerTwoOwnerLoop_() {
     _nrmAssert_(sentMessages[0].body.indexOf('B only') === -1, 'Owner B candidate leaked into Owner A SMS.');
     _nrmAssert_(sentMessages[0].to === '+15550000001', 'Owner A SMS recipient changed.');
     _nrmAssert_(sentMessages[0].from === '+15559999999', 'Owner A SMS sender changed.');
-    _nrmAssert_(sentMessages[1].body.indexOf('Reply YES to confirm') !== -1, 'Owner B review SMS missing.');
-    _nrmAssert_(sentMessages[1].body.indexOf('reply CANCEL') !== -1, 'Owner B review SMS omitted new-entry cancellation guidance.');
+    _nrmAssert_(sentMessages[1].body.indexOf('Reply CONFIRM to save') !== -1, 'Owner B review SMS missing.');
+    _nrmAssert_(sentMessages[1].body.indexOf('reply DISCARD') !== -1, 'Owner B review SMS omitted new-entry cancellation guidance.');
     _nrmAssert_(sentMessages[1].to === '+15550000002', 'Owner B SMS recipient changed.');
 
     const ownerAChoice = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_A, '+15550000001', 'SM5_A_CHOICE', '2'));
     _nrmAssert_(ownerAChoice.getContent().indexOf('<Response></Response>') !== -1, 'Owner A choice acknowledgement was not empty TwiML.');
     _nrmAssert_(sentMessages[2].body.indexOf('Review: Stage 2 deterministic dummy interaction.') !== -1, 'Pending review SMS summary missing.');
-    const ownerACommit = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_A, '+15550000001', 'SM5_A_APPROVE', 'YES'));
-    const ownerBCommit = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_B, '+15550000002', 'SM5_B_APPROVE', 'YES'));
+    const ownerACommit = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_A, '+15550000001', 'SM5_A_APPROVE', 'CONFIRM'));
+    const ownerBCommit = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_B, '+15550000002', 'SM5_B_APPROVE', 'CONFIRM'));
     _nrmAssert_(ownerACommit.getContent().indexOf('<Response></Response>') !== -1, 'Owner A commit acknowledgement was not empty TwiML.');
     _nrmAssert_(ownerBCommit.getContent().indexOf('<Response></Response>') !== -1, 'Owner B commit acknowledgement was not empty TwiML.');
     _nrmAssert_(sentMessages.length === 5, 'Expected five outbound review messages.');
@@ -138,7 +140,7 @@ function _nrmTestTwilioRestRequestConstruction_() {
   const request = _nrmBuildTwilioMessageRequest_({
     to: '+15550000001',
     from: '+15559999999',
-    body: 'Review: Coffee & lunch\nReply YES.'
+    body: 'Review: Coffee & lunch\nReply CONFIRM.'
   }, {
     account_sid: accountSid,
     auth_token: 'stage5-rest-test-token'
@@ -157,7 +159,7 @@ function _nrmTestTwilioRestRequestConstruction_() {
     'Messages request Basic Auth is wrong.'
   );
   _nrmAssert_(
-    request.options.payload === 'To=%2B15550000001&From=%2B15559999999&Body=Review%3A%20Coffee%20%26%20lunch%0AReply%20YES.',
+    request.options.payload === 'To=%2B15550000001&From=%2B15559999999&Body=Review%3A%20Coffee%20%26%20lunch%0AReply%20CONFIRM.',
     'Messages request To/From/Body encoding is wrong.'
   );
   return 'PASS Twilio REST request construction: exact Messages endpoint, Basic Auth, form content type, and encoded To/From/Body.';
@@ -191,7 +193,7 @@ function _nrmTestMissingDateOutboundPrompt_() {
   });
 }
 
-function _nrmTestOpenReviewAndCancelSms_() {
+function _nrmTestOpenReviewAndDiscardSms_() {
   return _nrmWithStage5Spreadsheet_(function () {
     const sentMessages = [];
     NRM_TEST_TWILIO_CLIENT_ = function (message) {
@@ -212,15 +214,15 @@ function _nrmTestOpenReviewAndCancelSms_() {
     _nrmAssert_(findStagingByReviewId(processing.review_id, NRM_TEST_OWNER_A).state === 'PROCESSING', 'Rejected SMS changed PROCESSING state.');
 
     doPost(_nrmStage5WorkerEvent_(
-      NRM_TEST_OWNER_A, '+15550000001', 'SM5_PROCESSING_CANCEL', 'CANCEL'
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_PROCESSING_CANCEL', 'DISCARD'
     ));
-    _nrmAssert_(sentMessages[1].body === 'Previous review cancelled. You can send a new entry now.', 'CANCEL confirmation SMS is wrong.');
-    _nrmAssert_(findStagingByReviewId(processing.review_id, NRM_TEST_OWNER_A) === null, 'CANCEL SMS path did not delete Staging.');
+    _nrmAssert_(sentMessages[1].body === 'Previous review discarded. You can send a new entry now.', 'DISCARD confirmation SMS is wrong.');
+    _nrmAssert_(findStagingByReviewId(processing.review_id, NRM_TEST_OWNER_A) === null, 'DISCARD SMS path did not delete Staging.');
 
     doPost(_nrmStage5WorkerEvent_(
-      NRM_TEST_OWNER_A, '+15550000001', 'SM5_CANCEL_NO_OPEN', 'CANCEL'
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_CANCEL_NO_OPEN', 'DISCARD'
     ));
-    _nrmAssert_(sentMessages[2].body === 'There is no open review to cancel. Send a new entry when you are ready.', 'No-open CANCEL reply is wrong.');
+    _nrmAssert_(sentMessages[2].body === 'There is no open review to discard. Send a new entry when you are ready.', 'No-open DISCARD reply is wrong.');
     const rejections = _nrmReadOwnedRows_('EventLog', NRM_TEST_OWNER_A).filter(function (entry) {
       return entry.record.event_type === 'MESSAGE_REJECTED_OPEN_REVIEW';
     });
@@ -228,8 +230,64 @@ function _nrmTestOpenReviewAndCancelSms_() {
       return entry.record.event_type === 'CANCELLED';
     });
     _nrmAssert_(rejections.length === 1 && cancellations.length === 1, 'Open-review rejection or CANCELLED log missing.');
-    return 'PASS open-review rejection and CANCEL SMS: PROCESSING got immediate resend guidance, CANCEL removed only Staging and confirmed, and no-open CANCEL returned harmless guidance.';
+    return 'PASS open-review rejection and DISCARD SMS: PROCESSING got immediate resend guidance, DISCARD removed only Staging and confirmed, and no-open DISCARD returned harmless guidance.';
   });
+}
+
+function _nrmTestWebhookIngressGuard_() {
+  return _nrmWithStage5Spreadsheet_(function () {
+    const sentMessages = [];
+    let aiCalls = 0;
+    NRM_TEST_TWILIO_CLIENT_ = function (message) {
+      sentMessages.push(Object.assign({}, message));
+      return { message_sid: 'SM_OUTBOUND_GUARD_' + sentMessages.length };
+    };
+    NRM_TEST_LOCAL_AI_CLIENT_ = function () {
+      aiCalls += 1;
+      throw new Error('Rejected webhook input must not call Local AI.');
+    };
+
+    const startResponse = doPost(_nrmStage5WorkerEvent_(
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_RESERVED_START', 'START'
+    ));
+    _nrmAssert_(startResponse.getContent().indexOf('<Response></Response>') !== -1, 'START acknowledgement was not empty TwiML.');
+    _nrmAssert_(sentMessages.length === 0, 'START caused a duplicate NRM response in addition to Twilio handling.');
+    _nrmAssert_(_nrmReadOwnedRows_('Staging', NRM_TEST_OWNER_A).length === 0, 'START created Staging.');
+
+    doPost(_nrmStage5WorkerEvent_(
+      NRM_TEST_OWNER_A, '+15550000001', 'SM5_CONTENT_FREE', 'Hello'
+    ));
+    _nrmAssert_(sentMessages.length === 1, 'Content-free input did not receive one resend prompt.');
+    _nrmAssert_(
+      sentMessages[0].body === 'Please resend with the person\'s name and what happened.',
+      'Content-free resend prompt is wrong.'
+    );
+    _nrmAssert_(aiCalls === 0, 'START or content-free webhook input called Local AI.');
+    _nrmAssert_(_nrmReadOwnedRows_('Staging', NRM_TEST_OWNER_A).length === 0, 'Rejected webhook input created Staging.');
+    return 'PASS reserved keyword and content-free webhook handling: START produced no NRM SMS or Staging; one-word greeting requested detail without calling Local AI.';
+  });
+}
+
+function _nrmTestUserFacingCommandKeywordSafety_() {
+  NRM_USER_FACING_COMMANDS.forEach(function (command) {
+    _nrmAssert_(
+      NRM_TWILIO_RESERVED_KEYWORDS.indexOf(command) === -1,
+      'User-facing command collides with Twilio keyword: ' + command
+    );
+  });
+  [
+    'Reply CONFIRM to save, or send a correction. Reply DISCARD to discard this review.',
+    _nrmOpenReviewInstruction_('PENDING_REVIEW'),
+    _nrmOpenReviewInstruction_('DISAMBIGUATING'),
+    _nrmOpenReviewInstruction_('ERROR'),
+    'I need a date for this. Reply with a date, or reply NO DATE.'
+  ].forEach(function (prompt) {
+    _nrmAssertTwilioSafePrompt_(prompt);
+  });
+  _nrmAssertThrows_(function () {
+    _nrmAssertTwilioSafePrompt_('Reply STOP to continue.');
+  }, 'RESERVED_TWILIO_KEYWORD_IN_PROMPT: STOP');
+  return 'PASS user-facing command keyword safety: CONFIRM, Y, NO DATE, and DISCARD avoid all reserved keywords; unsafe STOP prompt is rejected.';
 }
 
 function _nrmTestOutboundFailureStateIntegrity_() {
@@ -246,7 +304,7 @@ function _nrmTestOutboundFailureStateIntegrity_() {
     _nrmAssert_(staging[0].record.state === 'PENDING_REVIEW', 'Failed review SMS changed workflow state.');
     _nrmAssert_(_nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A).length === 0, 'Failed review SMS created an Interaction.');
 
-    const commitResponse = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_A, '+15550000001', 'SM5_FAIL_COMMIT', 'YES'));
+    const commitResponse = doPost(_nrmStage5WorkerEvent_(NRM_TEST_OWNER_A, '+15550000001', 'SM5_FAIL_COMMIT', 'CONFIRM'));
     _nrmAssert_(commitResponse.getContent().indexOf('<Response></Response>') !== -1, 'Failed-send commit did not acknowledge safely.');
     staging = _nrmReadOwnedRows_('Staging', NRM_TEST_OWNER_A);
     const interactions = _nrmReadOwnedRows_('Interactions', NRM_TEST_OWNER_A);

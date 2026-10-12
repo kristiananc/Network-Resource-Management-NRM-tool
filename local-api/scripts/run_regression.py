@@ -59,11 +59,20 @@ def main() -> int:
             actual = run_case(case, current_date)
             print("ACTUAL:")
             print(json.dumps(actual, indent=2, sort_keys=True))
-            errors = compare(case["expected"], actual)
+            expected_error = case.get("expected_error")
+            errors = (
+                [f"expected error {expected_error}, but inference succeeded"]
+                if expected_error
+                else compare(case["expected"], actual)
+            )
         except InferenceError as error:
-            errors = [f"{error.code}: {error.message}"]
+            actual = {"error": error.code, "message": error.message}
             print("ACTUAL:")
-            print(json.dumps({"error": error.code, "message": error.message}, indent=2))
+            print(json.dumps(actual, indent=2, sort_keys=True))
+            expected_error = case.get("expected_error")
+            errors = [] if expected_error == error.code else [
+                f"{error.code}: {error.message}"
+            ]
 
         if errors:
             failures += 1

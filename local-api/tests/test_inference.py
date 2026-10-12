@@ -115,7 +115,10 @@ class Stage6InferenceTests(unittest.TestCase):
             ProcessInteractionRequest(
                 owner_id="own_repair",
                 review_id="review-repair",
-                raw_body="Met Maya today.",
+                raw_body=(
+                    "Met Maya Patel from Acme Robotics today and discussed "
+                    "robotics partnerships."
+                ),
             ),
             current_date=date(2026, 9, 23),
             chat=chat,
@@ -123,6 +126,199 @@ class Stage6InferenceTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)
         self.assertIn("AI_INVALID_JSON", calls[1][-1]["content"])
         self.assertEqual(draft.summary, "Met Maya and discussed robotics partnerships.")
+
+    def test_reserved_start_is_rejected_before_model_call(self) -> None:
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(valid_output())
+
+        with self.assertRaises(InferenceError) as captured:
+            process_interaction(
+                ProcessInteractionRequest(
+                    owner_id="own_reserved",
+                    review_id="review-reserved-start",
+                    raw_body="START",
+                ),
+                chat=chat,
+            )
+
+        self.assertEqual(captured.exception.code, "RESERVED_MESSAGING_KEYWORD")
+        self.assertEqual(captured.exception.stage, "input_validation")
+        self.assertEqual(calls, [])
+
+    def test_content_free_message_is_rejected_before_model_call(self) -> None:
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(valid_output())
+
+        with self.assertRaises(InferenceError) as captured:
+            process_interaction(
+                ProcessInteractionRequest(
+                    owner_id="own_content_free",
+                    review_id="review-content-free",
+                    raw_body="Hello",
+                ),
+                chat=chat,
+            )
+
+        self.assertEqual(captured.exception.code, "INSUFFICIENT_CAPTURE_CONTENT")
+        self.assertEqual(captured.exception.stage, "input_validation")
+        self.assertEqual(calls, [])
+
+    def test_grounding_validator_repairs_fabricated_fields(self) -> None:
+        fabricated = {
+            "schema_version": "1.0",
+            "person": {
+                "name": "John Doe",
+                "phone": None,
+                "email": None,
+                "organization": None,
+                "context_tag": None,
+            },
+            "interaction": {
+                "date": None,
+                "platform": "TEXT",
+                "summary": "discussed project details",
+            },
+            "identity": {
+                "confidence": 1.0,
+                "evidence": ["John Doe", "discussed project details"],
+            },
+            "warnings": [],
+        }
+        repaired = {
+            "schema_version": "1.0",
+            "person": {
+                "name": "Sarah",
+                "phone": None,
+                "email": None,
+                "organization": None,
+                "context_tag": None,
+            },
+            "interaction": {
+                "date": None,
+                "platform": "IN_PERSON",
+                "summary": "Had coffee and discussed the winery opening.",
+            },
+            "identity": {
+                "confidence": 0.8,
+                "evidence": ["Sarah is named in the message."],
+            },
+            "warnings": ["No interaction date was supplied."],
+        }
+        outputs = iter([fabricated, repaired])
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
+
+        draft = process_interaction(
+            ProcessInteractionRequest(
+                owner_id="own_grounding",
+                review_id="review-grounding",
+                raw_body="Had coffee with Sarah and discussed the winery opening.",
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(len(calls), 2)
+        repair_prompt = calls[1][-1]["content"]
+        self.assertIn("person.name has no support", repair_prompt)
+        self.assertIn("interaction.platform has no channel evidence", repair_prompt)
+        self.assertIn("interaction.summary has no substantive support", repair_prompt)
+        self.assertEqual(draft.details_json["person"]["name"], "Sarah")
+        self.assertEqual(draft.platform.value, "IN_PERSON")
+        self.assertEqual(draft.summary, "Had coffee and discussed the winery opening.")
+
+    def test_empty_first_draft_is_repaired_before_return(self) -> None:
+        empty = {
+            "schema_version": "1.0",
+            "person": {
+                "name": None,
+                "phone": None,
+                "email": None,
+                "organization": None,
+                "context_tag": None,
+            },
+            "interaction": {"date": None, "platform": None, "summary": None},
+            "identity": {"confidence": 0.0, "evidence": []},
+            "warnings": ["No fields extracted."],
+        }
+        repaired = {
+            "schema_version": "1.0",
+            "person": {
+                "name": "Maya",
+                "phone": None,
+                "email": None,
+                "organization": None,
+                "context_tag": None,
+            },
+            "interaction": {
+                "date": None,
+                "platform": "CALL",
+                "summary": "Discussed the warehouse pilot.",
+            },
+            "identity": {
+                "confidence": 0.8,
+                "evidence": ["Maya is named in the message."],
+            },
+            "warnings": ["No interaction date was supplied."],
+        }
+        outputs = iter([empty, repaired])
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
+
+        draft = process_interaction(
+            ProcessInteractionRequest(
+                owner_id="own_empty_repair",
+                review_id="review-empty-repair",
+                raw_body="Called Maya about the warehouse pilot.",
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(len(calls), 2)
+        self.assertIn("draft is empty despite a usable capture", calls[1][-1]["content"])
+        self.assertEqual(draft.details_json["person"]["name"], "Maya")
+        self.assertEqual(draft.platform.value, "CALL")
+        self.assertEqual(draft.summary, "Discussed the warehouse pilot.")
+
+    def test_initial_summary_repeating_person_name_is_repaired(self) -> None:
+        repeated_name = valid_output()
+        repeated_name["interaction"]["summary"] = (
+            "Discussed robotics partnerships with Maya Patel."
+        )
+        repaired = valid_output()
+        repaired["interaction"]["summary"] = "Discussed robotics partnerships."
+        outputs = iter([repeated_name, repaired])
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(next(outputs))
+
+        draft = process_interaction(
+            ProcessInteractionRequest(
+                owner_id="own_summary_name_guard",
+                review_id="review-summary-name-guard",
+                raw_body=(
+                    "Met Maya Patel from Acme Robotics and discussed robotics "
+                    "partnerships over coffee."
+                ),
+            ),
+            chat=chat,
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(draft.summary, "Discussed robotics partnerships.")
 
     def test_rejects_malformed_json_after_one_repair(self) -> None:
         calls = []
@@ -136,7 +332,7 @@ class Stage6InferenceTests(unittest.TestCase):
                 ProcessInteractionRequest(
                     owner_id="own_invalid_json",
                     review_id="review-invalid-json",
-                    raw_body="Met someone.",
+                    raw_body="Met someone and discussed a project update.",
                 ),
                 chat=chat,
             )
@@ -156,7 +352,7 @@ class Stage6InferenceTests(unittest.TestCase):
                 ProcessInteractionRequest(
                     owner_id="own_schema_error",
                     review_id="review-schema-error",
-                    raw_body="Met someone.",
+                    raw_body="Met someone and discussed a project update.",
                 ),
                 chat=chat,
             )
@@ -365,8 +561,7 @@ class Stage6InferenceTests(unittest.TestCase):
             chat=chat,
         )
 
-        self.assertEqual(len(calls), 2)
-        self.assertIn("interaction.summary is unsupported", calls[1][-1]["content"])
+        self.assertEqual(len(calls), 1)
         self.assertEqual(revised.platform.value, "IN_PERSON")
         self.assertEqual(revised.summary, before_summary)
         self.assertEqual(revised.details_json, existing.details_json)
@@ -419,7 +614,7 @@ class Stage6InferenceTests(unittest.TestCase):
             chat=chat,
         )
 
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 1)
         self.assertEqual(revised.interaction_date, date(2026, 10, 3))
         self.assertEqual(revised.summary, existing.summary)
         self.assertEqual(revised.platform, existing.platform)
@@ -454,6 +649,13 @@ class Stage6InferenceTests(unittest.TestCase):
                         {
                             "field": "person.organization",
                             "value": "Acme Robotics",
+                        },
+                        {
+                            "field": "interaction.summary",
+                            "value": (
+                                "Discussed a warehouse automation pilot with "
+                                "Maya Patel from Acme Robotics."
+                            ),
                         },
                         {"field": "identity.confidence", "value": 0.95},
                         {
@@ -511,8 +713,7 @@ class Stage6InferenceTests(unittest.TestCase):
             chat=chat,
         )
 
-        self.assertEqual(len(calls), 2)
-        self.assertIn("interaction.summary", calls[1][-1]["content"])
+        self.assertEqual(len(calls), 1)
         self.assertEqual(
             revised.summary,
             "Discussed a warehouse automation pilot with an Acme Robotics contact.",
@@ -584,8 +785,7 @@ class Stage6InferenceTests(unittest.TestCase):
             chat=chat,
         )
 
-        self.assertEqual(len(calls), 2)
-        self.assertIn("interaction.summary is unsupported", calls[1][-1]["content"])
+        self.assertEqual(len(calls), 1)
         self.assertEqual(revised.details_json["person"]["name"], "Maia Patel")
         self.assertEqual(revised.summary, existing.summary)
         self.assertEqual(revised.interaction_date, existing.interaction_date)
@@ -651,9 +851,7 @@ class Stage6InferenceTests(unittest.TestCase):
             chat=chat,
         )
 
-        self.assertEqual(len(calls), 2)
-        self.assertIn("interaction.date", calls[1][-1]["content"])
-        self.assertIn("interaction.platform", calls[1][-1]["content"])
+        self.assertEqual(len(calls), 1)
         self.assertEqual(revised.summary, corrected_summary)
         self.assertEqual(revised.interaction_date, existing.interaction_date)
         self.assertEqual(revised.platform, existing.platform)
@@ -737,7 +935,7 @@ class Stage6InferenceTests(unittest.TestCase):
             )
 
         self.assertEqual(captured.exception.code, "AI_SCHEMA_ERROR")
-        self.assertIn("interaction.platform", captured.exception.message)
+        self.assertIn("no correction-supported changes", captured.exception.message)
         self.assertEqual(len(calls), 2)
 
     def test_ollama_connection_failure_is_categorized(self) -> None:
