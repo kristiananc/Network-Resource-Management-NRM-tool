@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "current_date": "2026-10-12",
+  "cases": [
+    {"id":"today_named_exact","type":"process","owner_id":"probe","raw_body":"Today I met a Bob at the grocery store","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"today_named_end","type":"process","owner_id":"probe","raw_body":"I met Bob at the grocery store today.","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"today_no_name_start","type":"process","owner_id":"probe","raw_body":"Today I met someone at the grocery store.","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"today_no_name_end","type":"process","owner_id":"probe","raw_body":"I discussed the grocery display today.","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"yesterday_named_start","type":"process","owner_id":"probe","raw_body":"Yesterday I met Bob at the grocery store.","expected":{"exact":{"interaction.date":"2026-10-11"}}},
+    {"id":"yesterday_named_end","type":"process","owner_id":"probe","raw_body":"I met Bob at the grocery store yesterday.","expected":{"exact":{"interaction.date":"2026-10-11"}}},
+    {"id":"yesterday_no_name_start","type":"process","owner_id":"probe","raw_body":"Yesterday I met someone at the grocery store.","expected":{"exact":{"interaction.date":"2026-10-11"}}},
+    {"id":"yesterday_no_name_end","type":"process","owner_id":"probe","raw_body":"I discussed the grocery display yesterday.","expected":{"exact":{"interaction.date":"2026-10-11"}}},
+    {"id":"morning_named_start","type":"process","owner_id":"probe","raw_body":"This morning I met Bob at the grocery store.","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"morning_named_end","type":"process","owner_id":"probe","raw_body":"I met Bob at the grocery store this morning.","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"morning_no_name_start","type":"process","owner_id":"probe","raw_body":"This morning I met someone at the grocery store.","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"morning_no_name_end","type":"process","owner_id":"probe","raw_body":"I discussed the grocery display this morning.","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"last_week_named_start","type":"process","owner_id":"probe","raw_body":"Last week I met Bob at the grocery store.","expected":{"exact":{"interaction.date":null}}},
+    {"id":"last_week_named_end","type":"process","owner_id":"probe","raw_body":"I met Bob at the grocery store last week.","expected":{"exact":{"interaction.date":null}}},
+    {"id":"last_week_no_name_start","type":"process","owner_id":"probe","raw_body":"Last week I met someone at the grocery store.","expected":{"exact":{"interaction.date":null}}},
+    {"id":"last_week_no_name_end","type":"process","owner_id":"probe","raw_body":"I discussed the grocery display last week.","expected":{"exact":{"interaction.date":null}}},
+    {"id":"exact_repeat_1","type":"process","owner_id":"probe","raw_body":"Today I met a Bob at the grocery store","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"exact_repeat_2","type":"process","owner_id":"probe","raw_body":"Today I met a Bob at the grocery store","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"exact_repeat_3","type":"process","owner_id":"probe","raw_body":"Today I met a Bob at the grocery store","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"exact_repeat_4","type":"process","owner_id":"probe","raw_body":"Today I met a Bob at the grocery store","expected":{"exact":{"interaction.date":"2026-10-12"}}},
+    {"id":"exact_repeat_5","type":"process","owner_id":"probe","raw_body":"Today I met a Bob at the grocery store","expected":{"exact":{"interaction.date":"2026-10-12"}}}
+  ]
+}

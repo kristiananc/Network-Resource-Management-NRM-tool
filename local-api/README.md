@@ -296,6 +296,14 @@ With Ollama reachable:
 PYTHONPATH=local-api python3 local-api/scripts/run_regression.py
 ```
 
+The controlled relative-date probe, including the original 16 variants and five
+identical repetitions of the live failure text, is versioned separately:
+
+```shell
+PYTHONPATH=local-api python3 local-api/scripts/run_regression.py \
+  --corpus local-api/regression/date_resolution_probe.json
+```
+
 Run one case in isolation with:
 
 ```shell
