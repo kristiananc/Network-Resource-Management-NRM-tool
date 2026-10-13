@@ -187,6 +187,43 @@ class Stage7VisionTests(unittest.TestCase):
         self.assertEqual(draft.details_json["person"]["organization"], "NAVWAR")
         self.assertEqual(draft.summary, "Discussed a maritime autonomy project.")
 
+    def test_mms_caption_relative_date_overrides_model_omission(self) -> None:
+        client = media_client()
+
+        def vision_chat(messages, _schema):
+            self.assertIn(
+                "deterministic_relative_date=2026-10-01",
+                messages[1]["content"],
+            )
+            return output_json(
+                name="Sarah Chen",
+                organization="NAVWAR",
+                summary="Discussed a maritime autonomy project.",
+                evidence=["caption and image identify the contact"],
+                warnings=["Date is unknown"],
+                interaction_date=None,
+            )
+
+        with tempfile.TemporaryDirectory() as root_name, patch.dict(
+            os.environ, MEDIA_ENV, clear=False
+        ):
+            draft = process_interaction(
+                ProcessInteractionRequest(
+                    owner_id="own_caption_date",
+                    review_id="review_caption_date",
+                    raw_body="Today I met Sarah Chen and discussed a maritime autonomy project.",
+                    media_refs=[MEDIA_URL],
+                ),
+                current_date=date(2026, 10, 1),
+                vision_chat=vision_chat,
+                media_client=client,
+                media_temp_root=Path(root_name),
+            )
+        client.close()
+
+        self.assertEqual(draft.interaction_date, date(2026, 10, 1))
+        self.assertEqual(draft.details_json["warnings"], [])
+
     def test_caption_correction_wins_over_conflicting_image_text(self) -> None:
         client = media_client()
 

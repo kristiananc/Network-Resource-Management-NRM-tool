@@ -96,7 +96,7 @@ class Stage6ApiTests(unittest.TestCase):
             json={
                 "owner_id": owner_id,
                 "review_id": "review_process_001",
-                "raw_body": "Met Sarah Chen from NAVWAR for coffee.",
+                "raw_body": "Met Sarah Chen from NAVWAR for coffee on August 26, 2026.",
                 "media_refs": [],
             },
         )
@@ -125,7 +125,7 @@ class Stage6ApiTests(unittest.TestCase):
                         },
                         "warnings": [],
                     },
-                    "raw_body": "Met Sarah Chen from NAVWAR for coffee.",
+                    "raw_body": "Met Sarah Chen from NAVWAR for coffee on August 26, 2026.",
                     "media_refs": [],
                     "ai_model": "llama3.1:8b",
                     "schema_version": "1.0",
@@ -138,7 +138,7 @@ class Stage6ApiTests(unittest.TestCase):
             json={
                 "owner_id": owner_id,
                 "review_id": "review_process_001",
-                "raw_body": "Met Sarah Chen from NAVWAR for coffee.",
+                "raw_body": "Met Sarah Chen from NAVWAR for coffee on August 26, 2026.",
                 "media_refs": [],
             },
         )
@@ -397,7 +397,7 @@ class Stage6ApiTests(unittest.TestCase):
                     "review_id": "review_log_test",
                     "raw_body": (
                         "Met Sarah Chen from NAVWAR for coffee; sensitive body "
-                        "must not be logged"
+                        "must not be logged; the meeting was August 26, 2026"
                     ),
                 },
             )

@@ -73,6 +73,15 @@ after a subsequent `CONFIRM`. The same preflight names other correctable require
 fields, including a missing new-contact display name. This uses the frozen v1
 Staging headers and workflow-state enum without adding a column or state.
 
+Before model output is accepted, the local API resolves whole-word unambiguous
+relative dates from an application date computed in `NRM_TIMEZONE` (default
+`America/Los_Angeles`). Current-day phrases (`today`, `this morning`, `this
+afternoon`, `this evening`, `tonight`) resolve to that calendar day; previous-day
+phrases (`yesterday`, its day-part variants, and `last night`) resolve to the
+preceding day. Conflicting current/previous cues and vague phrases remain null,
+and text with no date evidence is never defaulted to today. The same policy
+applies to text captures, MMS captions, and draft corrections.
+
 Before Staging creation, text-only captures pass a deterministic ingress guard.
 Exact Twilio carrier keywords (`STOP`, `STOPALL`, `UNSUBSCRIBE`, `CANCEL`,
 `END`, `QUIT`, `REVOKE`, `OPTOUT`, `START`, `UNSTOP`, `YES`, `HELP`, and

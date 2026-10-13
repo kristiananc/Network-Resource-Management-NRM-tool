@@ -3,7 +3,7 @@
 import json
 import os
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 import httpx
@@ -11,6 +11,8 @@ import httpx
 from app.inference import (
     InferenceError,
     SUBSTANTIVE_SUMMARY_CUES,
+    _relative_date_decision,
+    _server_current_date,
     _ollama_chat,
     _ollama_vision_num_ctx,
     process_interaction,
@@ -42,6 +44,29 @@ def valid_output(**overrides):
     }
     output.update(overrides)
     return output
+
+
+def date_probe_output(*, name="Bob", interaction_date=None, warnings=None):
+    return {
+        "schema_version": "1.0",
+        "person": {
+            "name": name,
+            "phone": None,
+            "email": None,
+            "organization": None,
+            "context_tag": None,
+        },
+        "interaction": {
+            "date": interaction_date,
+            "platform": "IN_PERSON",
+            "summary": "met at the grocery store",
+        },
+        "identity": {
+            "confidence": 0.9 if name else 0.0,
+            "evidence": ["name supplied"] if name else [],
+        },
+        "warnings": warnings or [],
+    }
 
 
 class Stage6InferenceTests(unittest.TestCase):
@@ -102,6 +127,177 @@ class Stage6InferenceTests(unittest.TestCase):
         self.assertEqual(captured["messages"][-1]["content"], request.raw_body)
         self.assertIn("$defs", captured["schema"])
         self.assertEqual(draft.details_json["person"]["name"], "Maya Patel")
+
+    def test_relative_date_variants_are_deterministic_with_or_without_names(self) -> None:
+        current_date = date(2026, 10, 12)
+        cases = [
+            ("Today I met a Bob at the grocery store", "Bob", date(2026, 10, 12)),
+            ("Today I met someone at the grocery store", None, date(2026, 10, 12)),
+            ("Yesterday I met Bob at the grocery store", "Bob", date(2026, 10, 11)),
+            ("Yesterday I met someone at the grocery store", None, date(2026, 10, 11)),
+            ("This morning I met Bob at the grocery store", "Bob", date(2026, 10, 12)),
+            ("This morning I met someone at the grocery store", None, date(2026, 10, 12)),
+            ("Last week I met Bob at the grocery store", "Bob", None),
+            ("Last week I met someone at the grocery store", None, None),
+        ]
+        for raw_body, name, expected_date in cases:
+            with self.subTest(raw_body=raw_body):
+                draft = process_interaction(
+                    ProcessInteractionRequest(
+                        owner_id="own_relative_date",
+                        review_id="review-relative-date",
+                        raw_body=raw_body,
+                    ),
+                    current_date=current_date,
+                    chat=lambda _messages, _schema, name=name: json.dumps(
+                        date_probe_output(
+                            name=name,
+                            interaction_date=None,
+                            warnings=["Date is unknown"],
+                        )
+                    ),
+                )
+                self.assertEqual(draft.interaction_date, expected_date)
+                warnings = draft.details_json["warnings"]
+                if expected_date is None:
+                    self.assertIn("too vague", warnings[-1])
+                else:
+                    self.assertEqual(warnings, [])
+
+    def test_relative_date_matching_uses_whole_words_and_rejects_conflicts(self) -> None:
+        current_date = date(2026, 10, 12)
+        for text in ("todayish meeting", "yesterdays meeting", "tonightly meeting"):
+            with self.subTest(text=text):
+                self.assertEqual(
+                    _relative_date_decision(text, current_date).status,
+                    "none",
+                )
+
+        draft = process_interaction(
+            ProcessInteractionRequest(
+                owner_id="own_conflicting_date",
+                review_id="review-conflicting-date",
+                raw_body="Today I remembered meeting Bob at the grocery store yesterday.",
+            ),
+            current_date=current_date,
+            chat=lambda _messages, _schema: json.dumps(
+                date_probe_output(
+                    interaction_date="2026-10-12",
+                    warnings=[],
+                )
+            ),
+        )
+        self.assertIsNone(draft.interaction_date)
+        self.assertEqual(
+            draft.details_json["warnings"],
+            ["Conflicting relative-date cues; interaction date remains unknown."],
+        )
+
+    def test_timezone_and_late_night_calendar_boundaries(self) -> None:
+        shortly_after_midnight_la = datetime(
+            2026, 10, 12, 7, 30, tzinfo=timezone.utc
+        )
+        with patch.dict(os.environ, {}, clear=True):
+            current_date = _server_current_date(now=shortly_after_midnight_la)
+        self.assertEqual(current_date, date(2026, 10, 12))
+
+        expected = {
+            "last night": date(2026, 10, 11),
+            "yesterday evening": date(2026, 10, 11),
+            "tonight": date(2026, 10, 12),
+            "this evening": date(2026, 10, 12),
+        }
+        for text, expected_date in expected.items():
+            with self.subTest(text=text):
+                self.assertEqual(
+                    _relative_date_decision(text, current_date).value,
+                    expected_date,
+                )
+
+        with patch.dict(os.environ, {"NRM_TIMEZONE": "Not/A_Timezone"}, clear=False):
+            with self.assertRaises(InferenceError) as captured:
+                _server_current_date(now=shortly_after_midnight_la)
+        self.assertEqual(captured.exception.stage, "timezone_configuration")
+
+    def test_explicit_date_forms_are_valid_grounding_evidence(self) -> None:
+        cases = [
+            "Met Bob at the grocery store on October 3.",
+            "Met Bob at the grocery store on Oct 3, 2026.",
+            "Met Bob at the grocery store on 10/3.",
+            "Met Bob at the grocery store on the 3rd.",
+            "Met Bob at the grocery store on 2026-10-03.",
+        ]
+        for raw_body in cases:
+            with self.subTest(raw_body=raw_body):
+                draft = process_interaction(
+                    ProcessInteractionRequest(
+                        owner_id="own_explicit_date",
+                        review_id="review-explicit-date",
+                        raw_body=raw_body,
+                    ),
+                    current_date=date(2026, 10, 12),
+                    chat=lambda _messages, _schema: json.dumps(
+                        date_probe_output(interaction_date="2026-10-03")
+                    ),
+                )
+                self.assertEqual(draft.interaction_date, date(2026, 10, 3))
+
+    def test_unsupported_concrete_date_is_rejected_after_repair(self) -> None:
+        calls = []
+
+        def chat(messages, _schema):
+            calls.append(messages)
+            return json.dumps(date_probe_output(interaction_date="2026-10-12"))
+
+        with self.assertRaises(InferenceError) as captured:
+            process_interaction(
+                ProcessInteractionRequest(
+                    owner_id="own_unsupported_date",
+                    review_id="review-unsupported-date",
+                    raw_body="Met Bob at the grocery store.",
+                ),
+                current_date=date(2026, 10, 12),
+                chat=chat,
+            )
+        self.assertEqual(captured.exception.code, "AI_SCHEMA_ERROR")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("interaction.date has no date evidence", calls[1][-1]["content"])
+
+    def test_relative_date_revision_overrides_model_omission(self) -> None:
+        existing = InteractionDraft(
+            interaction_date=None,
+            platform="IN_PERSON",
+            summary="Met at the grocery store.",
+            details_json={
+                "person": {
+                    "name": "Bob",
+                    "phone": None,
+                    "email": None,
+                    "organization": None,
+                    "context_tag": None,
+                },
+                "identity": {"confidence": 0.9, "evidence": ["Bob"]},
+                "warnings": ["Date is unknown"],
+            },
+            raw_body="Met Bob at the grocery store.",
+            media_refs=[],
+            ai_model="llama3.1:8b",
+            schema_version="1.0",
+        )
+        revised = revise_draft(
+            ReviseDraftRequest(
+                owner_id="own_revision_date",
+                review_id="review-revision-date",
+                draft=existing,
+                correction="Today",
+            ),
+            current_date=date(2026, 10, 12),
+            chat=lambda _messages, _schema: json.dumps(
+                {"schema_version": "1.0", "changes": []}
+            ),
+        )
+        self.assertEqual(revised.interaction_date, date(2026, 10, 12))
+        self.assertEqual(revised.details_json["warnings"], [])
 
     def test_repairs_malformed_json_once(self) -> None:
         outputs = iter(["not-json", json.dumps(valid_output())])
@@ -293,10 +489,12 @@ class Stage6InferenceTests(unittest.TestCase):
 
     def test_initial_summary_repeating_person_name_is_repaired(self) -> None:
         repeated_name = valid_output()
+        repeated_name["interaction"]["date"] = None
         repeated_name["interaction"]["summary"] = (
             "Discussed robotics partnerships with Maya Patel."
         )
         repaired = valid_output()
+        repaired["interaction"]["date"] = None
         repaired["interaction"]["summary"] = "Discussed robotics partnerships."
         outputs = iter([repeated_name, repaired])
         calls = []

@@ -78,6 +78,7 @@ MMS processing can succeed:
 ```text
 NRM_INTERNAL_API_TOKEN=<the existing bearer token also configured in Apps Script>
 NRM_OLLAMA_BASE_URL=http://127.0.0.1:11434
+NRM_TIMEZONE=America/Los_Angeles
 PYTHONPATH=local-api
 NRM_PYTHON_EXE=local-api\.venv\Scripts\python.exe
 NRM_TWILIO_ACCOUNT_SID=<the Twilio Account SID>
@@ -93,6 +94,12 @@ their template defaults. The vision context defaults to 8,192 tokens and must
 remain between 4,096 and 32,768 for the configured Qwen model. The Twilio
 values are local copies needed for authenticated media downloads; never copy
 them into a tracked file.
+
+`NRM_TIMEZONE` must be an IANA timezone name. Keep
+`America/Los_Angeles` unless the account owner's calendar should use another
+zone. FastAPI uses it for `today`, `yesterday`, and late-night phrases instead
+of inheriting the LocalSystem service account's timezone. The Python `tzdata`
+dependency supplies IANA timezone data on Windows.
 
 Install the Stage 7 vision model before starting MMS verification:
 

@@ -25,6 +25,7 @@ Optional local overrides:
 
 ```text
 NRM_OLLAMA_BASE_URL=http://192.168.0.200:11434
+NRM_TIMEZONE=America/Los_Angeles
 NRM_OLLAMA_TEXT_MODEL=llama3.1:8b
 NRM_OLLAMA_VISION_MODEL=qwen2.5vl:3b
 NRM_OLLAMA_VISION_NUM_CTX=8192
@@ -35,6 +36,16 @@ The timeout is intentionally long enough for CPU-only inference. Connection,
 timeout, or Ollama HTTP failures return `LOCAL_API_UNAVAILABLE`. Malformed model
 JSON is repaired once and then returns `AI_INVALID_JSON`; valid JSON that breaks
 the schema is repaired once and then returns `AI_SCHEMA_ERROR`.
+
+`NRM_TIMEZONE` is an IANA timezone name and defaults to
+`America/Los_Angeles`. NRM computes its application `current_date` in that zone
+rather than inheriting the Windows service account's local timezone. Text,
+caption, and revision phrases `today`, `this morning`, `this afternoon`, `this
+evening`, and `tonight` resolve to that calendar day; `yesterday`, `yesterday
+morning/afternoon/evening`, and `last night` resolve to the preceding calendar
+day. This remains true shortly after midnight. Conflicting current/previous-day
+cues and vague phrases such as `last week`, `recently`, and `a while ago` stay
+null. A message with no date evidence is never defaulted to today.
 
 The model never receives the request's `owner_id`. FastAPI echoes that value
 unchanged outside inference, preserving the existing tenant-boundary contract.
@@ -190,7 +201,9 @@ Text-only requests are rejected before Ollama when they contain an exact Twilio
 carrier keyword or lack enough content to identify a person/topic and an
 interaction. For usable captures, Python validates more than JSON shape: names,
 organizations, platforms, and summaries must have evidence in the source text,
-and an entirely empty first draft is invalid. A grounding failure receives the
+concrete dates require a relative, weekday, or explicit date expression, and an
+entirely empty first draft is invalid. Explicit evidence includes forms such as
+`October 3`, `Oct 3, 2026`, `10/3`, `3rd`, and `2026-10-03`. A grounding failure receives the
 normal single repair attempt; a second failure returns `AI_SCHEMA_ERROR` rather
 than passing unsupported fields downstream.
 
